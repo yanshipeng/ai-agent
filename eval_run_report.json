@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-07-23T14:34:20.961619+00:00",
+  "total": 20,
+  "ok": 20,
+  "fail": 0,
+  "ok_rate": 1.0,
+  "p95_latency": 3680.1,
+  "p50_latency": 1299.0,
+  "max_latency": 9192.0,
+  "top_errors": [],
+  "tag_fail_counts": {
+    "normal": 0,
+    "clarify": 0,
+    "refuse": 0
+  },
+  "tag_totals": {
+    "normal": 10,
+    "clarify": 5,
+    "refuse": 5
+  }
+}
