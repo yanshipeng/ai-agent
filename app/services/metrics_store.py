@@ -1,13 +1,20 @@
 """请求指标落盘：每次请求结束追加 1 行 JSON 到 requests.jsonl。
 
-字段（建议）：
-  ts, request_id, path, ok, status_code,
-  latency_ms_total, latency_ms_llm,
-  llm_model, retry_count, finish_reason, error_code,
-  query_len, query_sha256_8,
-  prompt_tokens / completion_tokens / total_tokens（有则写）
+==========================================================================
+做什么 / 为什么不跟「事件日志」混在一起
+==========================================================================
+- 事件日志（stdout JSON）：看过程（retrieve_start → llm_call_end …）
+- requests.jsonl：看结果指标（一行一请求，方便 stats / 评测对比）
 
-不写 query / answer 原文。写入失败只记日志，不阻断主流程。
+为什么不写 query / answer 原文？
+  隐私与体积；用 query_len + query_sha256_8 足够关联排障。
+
+为什么写入失败只打日志、不抛异常？
+  指标是旁路；不能因为磁盘满了就让用户问答失败。
+
+RAG 最小字段：mode / top_k / retrieve_ms / context_chunks / citations_count
+  —— Day10 评测与 A/B 对比直接读这些列。
+==========================================================================
 """
 
 from __future__ import annotations
@@ -88,10 +95,16 @@ def build_ask_metric(
     query_len: int | None = None,
     query_sha256_8: str | None = None,
     usage: dict[str, Any] | None = None,
+    mode: str | None = None,
+    top_k: int | None = None,
+    retrieve_ms: int | None = None,
+    context_chunks: int | None = None,
+    citations_count: int | None = None,
 ) -> dict[str, Any]:
     """构造 /ask 请求结束指标记录（不含 query/answer 原文）。
 
     若传入 query，可自动补齐 query_len / query_sha256_8（仍不会把原文写入 record）。
+    RAG 字段：mode / top_k / retrieve_ms / context_chunks / citations_count。
     """
     resolved_len = query_len
     resolved_hash = query_sha256_8
@@ -114,6 +127,11 @@ def build_ask_metric(
         "error_code": error_code,
         "query_len": resolved_len,
         "query_sha256_8": resolved_hash,
+        "mode": mode,
+        "top_k": top_k,
+        "retrieve_ms": retrieve_ms,
+        "context_chunks": context_chunks,
+        "citations_count": citations_count,
     }
     record.update(_extract_tokens(usage))
     return record

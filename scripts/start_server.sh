@@ -23,6 +23,8 @@ APP_MODULE="${APP_MODULE:-app.main:app}"
 
 echo "[start] project=$ROOT"
 echo "[start] target=${HOST}:${PORT}"
+echo "[start] tip: 日志为 JSON；看懂请读 docs/日志阅读指南.md"
+echo "[start] tip: 建议 tee 存日志 → ./scripts/start_server.sh 2>&1 | tee /tmp/app.log"
 
 # 1) 停止占用端口的旧进程
 PIDS="$(lsof -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
@@ -82,6 +84,8 @@ fi
 
 # 5) 启动（前台，方便看日志；Ctrl+C 停止）
 echo "[start] starting uvicorn ${APP_MODULE}"
-echo "[start] health: http://127.0.0.1:${PORT}/health"
-echo "[start] docs:   http://127.0.0.1:${PORT}/docs"
+echo "[start] health : http://127.0.0.1:${PORT}/health"
+echo "[start] ask    : POST http://127.0.0.1:${PORT}/ask  （RAG: ?mode=rag）"
+echo "[start] docs   : http://127.0.0.1:${PORT}/docs"
+echo "[start] 启动后终端会出现 event=app_startup 的 JSON（含中文 hint）"
 exec uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT"

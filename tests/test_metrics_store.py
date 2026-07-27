@@ -45,6 +45,24 @@ def test_build_ask_metric_shape_and_tokens():
     assert "answer" not in row
 
 
+def test_build_ask_metric_includes_rag_fields():
+    row = build_ask_metric(
+        request_id="r2",
+        ok=True,
+        status_code=200,
+        mode="rag",
+        top_k=5,
+        retrieve_ms=33,
+        context_chunks=5,
+        citations_count=5,
+    )
+    assert row["mode"] == "rag"
+    assert row["top_k"] == 5
+    assert row["retrieve_ms"] == 33
+    assert row["context_chunks"] == 5
+    assert row["citations_count"] == 5
+
+
 def test_ask_writes_one_jsonl_line(tmp_path, monkeypatch):
     metrics_path = tmp_path / "requests.jsonl"
     monkeypatch.setenv("REQUESTS_JSONL_PATH", str(metrics_path))
@@ -85,6 +103,9 @@ def test_ask_writes_one_jsonl_line(tmp_path, monkeypatch):
     assert row["prompt_tokens"] == 1
     assert row["completion_tokens"] == 2
     assert row["total_tokens"] == 3
+    assert row["mode"] == "llm"
+    assert row["context_chunks"] == 0
+    assert row["citations_count"] == 0
     assert "query" not in row
     assert "answer" not in row
     assert "不写进jsonl的原文" not in lines[0]

@@ -79,6 +79,7 @@ def test_ask_logs_expected_events(tmp_path, monkeypatch, capsys):
     assert start["query_len"] == len("秘密问题不要进日志")
     assert start["query_sha256_8"] == query_sha256_8("秘密问题不要进日志")
     assert "query" not in start
+    assert "hint" in start and "mode=llm" in start["hint"]
 
     success = next(r for r in ask_logs if r.get("event") == "request_success")
     assert success["ok"] is True
@@ -86,3 +87,28 @@ def test_ask_logs_expected_events(tmp_path, monkeypatch, capsys):
     assert success["llm_provider"] == "deepseek"
     assert success["llm_model"] == "deepseek-v4-flash"
     assert success["retry_count"] == 1
+    assert "hint" in success
+
+
+def test_ask_rag_logs_retrieve_events(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("REQUESTS_JSONL_PATH", str(tmp_path / "requests.jsonl"))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("KB_INDEX_DIR", str(tmp_path / "missing_index"))
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        client.app.state.llm_client = MagicMock()
+        resp = client.post("/ask?mode=rag", json={"query": "ANR"})
+        assert resp.status_code == 503
+        rid = resp.json()["request_id"]
+
+    logs = _parse_json_logs(capsys.readouterr().out)
+    ask_logs = [r for r in logs if r.get("request_id") == rid]
+    events = [r.get("event") for r in ask_logs]
+    assert "request_start" in events
+    assert "retrieve_start" in events
+    assert "request_error" in events
+    start = next(r for r in ask_logs if r.get("event") == "request_start")
+    assert "mode=rag" in start.get("hint", "")

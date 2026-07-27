@@ -1,11 +1,17 @@
 """DeepSeek LLM Client：基于 OpenAI SDK 的封装（与 HTTP 路由解耦）。
 
-职责：
-- chat(messages) / ask(question)：发起上游调用
-- 将 SDK / HTTP 错误映射为内部错误码（UPSTREAM_*）
-- 对可重试错误做有限次重试；耗尽后可返回兜底文案
+==========================================================================
+为什么单独拆这一层
+==========================================================================
+1) 路由只关心「给 messages，拿 answer / 错误码」，不要散落 OpenAI SDK。
+2) 重试 / 错误映射 / 兜底集中在一处，契约测试可 mock LLMClient。
+3) smoke_llm_client.py 可不启 FastAPI，直接验证 Key 与网络。
 
-路由层只应依赖本模块的 LLMClient / LLMError / LLMResult，不要直接写 OpenAI SDK。
+错误策略（简要）：
+  - 401 / 400：不重试（配置或请求本身有问题）
+  - 429 / 超时 / 5xx / 未知：有限重试；仍失败且开启兜底 → HTTP 200 + fallback 文案
+  - 这样「可恢复的抖动」不把整站打成 5xx，同时日志仍能看到 error_code
+==========================================================================
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ logger = get_logger(__name__)
 # ---------- 调用默认值（与环境变量默认对齐；timeout 实际读 Settings） ----------
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_MAX_TOKENS = 2048
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_STREAM = False
 DEFAULT_EXTRA_BODY: dict[str, Any] = {"thinking": {"type": "disabled"}}
@@ -222,6 +228,8 @@ class LLMClient:
             request_id=request_id,
             llm_provider=LLM_PROVIDER,
             llm_model=DEFAULT_MODEL,
+            message_count=len(messages),
+            hint=f"开始调用 DeepSeek（model={DEFAULT_MODEL}，messages={len(messages)} 条）",
         )
 
         for attempt in range(1, attempts + 1):
@@ -238,6 +246,10 @@ class LLMClient:
                     finish_reason=result.finish_reason,
                     retry_count=retry_count,
                     latency_ms=result.latency_ms,
+                    hint=(
+                        f"大模型成功返回：耗时 {result.latency_ms}ms，"
+                        f"finish_reason={result.finish_reason}，retry={retry_count}"
+                    ),
                 )
                 return LLMResult(
                     answer=result.answer,
@@ -276,6 +288,10 @@ class LLMClient:
                 retry_count=retry_count,
                 latency_ms=latency_ms,
                 error_code=last_error.code,
+                hint=(
+                    f"上游多次失败后走兜底文案：error_code={last_error.code}，"
+                    f"retry={retry_count}"
+                ),
             )
             return LLMResult(
                 answer=FALLBACK_ANSWER,
@@ -299,6 +315,7 @@ class LLMClient:
             retry_count=retry_count,
             latency_ms=latency_ms,
             error_code=last_error.code,
+            hint=f"大模型调用最终失败并将返回错误：error_code={last_error.code}",
         )
         raise last_error
 

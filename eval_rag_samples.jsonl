@@ -1,0 +1,31 @@
+{"id": "rag_a_01", "query": "Android ANR 怎么排查", "tag": "normal", "category": "A"}
+{"id": "rag_a_02", "query": "主线程卡顿如何分析 traces", "tag": "normal", "category": "A"}
+{"id": "rag_a_03", "query": "Input dispatching timed out 怎么查", "tag": "normal", "category": "A"}
+{"id": "rag_a_04", "query": "ANR 日志里 CPU 负载怎么看", "tag": "normal", "category": "A"}
+{"id": "rag_b_01", "query": "Crash 堆栈怎么看", "tag": "normal", "category": "B"}
+{"id": "rag_b_02", "query": "App 启动白屏原因", "tag": "normal", "category": "B"}
+{"id": "rag_b_03", "query": "Android 闪退如何抓 tombstone", "tag": "normal", "category": "B"}
+{"id": "rag_b_04", "query": "冷启动优化有哪些步骤", "tag": "normal", "category": "B"}
+{"id": "rag_c_01", "query": "OOM 内存泄漏怎么查", "tag": "normal", "category": "C"}
+{"id": "rag_c_02", "query": "Bitmap 内存优化怎么做", "tag": "normal", "category": "C"}
+{"id": "rag_c_03", "query": "LeakCanary 怎么定位泄漏", "tag": "normal", "category": "C"}
+{"id": "rag_c_04", "query": "Java 堆内存不足怎么排查", "tag": "normal", "category": "C"}
+{"id": "rag_d_01", "query": "网络请求超时重试怎么设计", "tag": "normal", "category": "D"}
+{"id": "rag_d_02", "query": "OkHttp 拦截器如何排查失败请求", "tag": "normal", "category": "D"}
+{"id": "rag_d_03", "query": "弱网下接口失败怎么处理", "tag": "normal", "category": "D"}
+{"id": "rag_e_01", "query": "定位不准或漂移怎么办", "tag": "normal", "category": "E"}
+{"id": "rag_e_02", "query": "GPS 信号差导致导航偏移怎么查", "tag": "normal", "category": "E"}
+{"id": "rag_e_03", "query": "Android 获取经纬度有哪些方案", "tag": "normal", "category": "E"}
+{"id": "rag_f_01", "query": "WebView 白屏怎么办", "tag": "normal", "category": "F"}
+{"id": "rag_f_02", "query": "JSBridge 调用失败怎么排查", "tag": "normal", "category": "F"}
+{"id": "rag_f_03", "query": "Hybrid 页面加载很慢怎么优化", "tag": "normal", "category": "F"}
+{"id": "rag_code_01", "query": "给我一段排查 ANR 的 adb 命令示例", "tag": "code_seeking", "category": "A"}
+{"id": "rag_code_02", "query": "Android 主线程卡顿检测代码怎么写", "tag": "code_seeking", "category": "A"}
+{"id": "rag_code_03", "query": "LeakCanary 接入示例代码", "tag": "code_seeking", "category": "C"}
+{"id": "rag_code_04", "query": "OkHttp 超时重试代码片段", "tag": "code_seeking", "category": "D"}
+{"id": "rag_code_05", "query": "WebView 白屏检测相关代码怎么写", "tag": "code_seeking", "category": "F"}
+{"id": "rag_code_06", "query": "Looper 阻塞监控示例代码", "tag": "code_seeking", "category": "A"}
+{"id": "rag_g_01", "query": "推送收不到消息怎么查", "tag": "normal", "category": "G"}
+{"id": "rag_insuff_01", "query": "今天公司食堂午饭菜单是什么？", "tag": "insufficient"}
+{"id": "rag_insuff_02", "query": "帮我改一下昨天那个线上 bug，你看着办。", "tag": "insufficient"}
+{"id": "rag_insuff_03", "query": "用量子计算机修复火星滴滴司机端的神秘闪退。", "tag": "insufficient"}

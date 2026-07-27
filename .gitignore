@@ -15,6 +15,17 @@ venv/
 htmlcov/
 requests.jsonl
 eval_results.jsonl
+eval_report.json
+rag_eval_report.json
 reports/
+data/stability_kb/raw/
+data/stability_kb/articles.jsonl
+data/stability_kb/discovered_seeds.jsonl
+data/stability_kb/crawl_report.json
+data/stability_kb/docs.jsonl
+data/stability_kb/docs_report.json
+data/stability_kb/chunks.jsonl
+data/stability_kb/chunks_report.json
+data/stability_kb/index/
 .DS_Store
 *.log

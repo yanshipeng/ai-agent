@@ -101,6 +101,7 @@ def test_ask_success_contract_with_mocked_llm(client: TestClient):
     assert body["citations"] == []
     assert body["latency_ms"] == 321
     assert body["model"] == "deepseek-v4-flash"
+    assert body["meta"]["mode"] == "llm"
 
     mock_client.chat.assert_called_once()
     args, kwargs = mock_client.chat.call_args
