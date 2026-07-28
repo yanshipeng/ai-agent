@@ -17,6 +17,7 @@ requests.jsonl
 eval_results.jsonl
 eval_report.json
 rag_eval_report.json
+agent_eval_report.json
 reports/
 data/stability_kb/raw/
 data/stability_kb/articles.jsonl

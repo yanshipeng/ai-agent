@@ -100,11 +100,32 @@ def build_ask_metric(
     retrieve_ms: int | None = None,
     context_chunks: int | None = None,
     citations_count: int | None = None,
+    agent_steps: int | None = None,
+    tool_calls_count: int | None = None,
+    tools_used: list[str] | None = None,
+    agent_final_phase: str | None = None,
+    agent_phase_trace: list[str] | None = None,
+    degraded_to: str | None = None,
+    stop_reason: str | None = None,
+    max_steps: int | None = None,
+    session_id: str | None = None,
+    session_id_sha256_8: str | None = None,
+    history_messages: int | None = None,
+    history_chars: int | None = None,
+    session_turns_kept: int | None = None,
+    session_msgs: int | None = None,
+    session_chars: int | None = None,
+    session_summarized: bool | None = None,
+    session_truncated_msgs: int | None = None,
 ) -> dict[str, Any]:
     """构造 /ask 请求结束指标记录（不含 query/answer 原文）。
 
     若传入 query，可自动补齐 query_len / query_sha256_8（仍不会把原文写入 record）。
     RAG 字段：mode / top_k / retrieve_ms / context_chunks / citations_count。
+    Agent 字段：agent_steps / max_steps / tool_calls_count / tools_used /
+               agent_final_phase / agent_phase_trace / degraded_to / stop_reason。
+    Session 字段：session_id / history_messages / history_chars（条数与字符，不含消息原文）
+               + session_id_sha256_8 / 压缩统计。
     """
     resolved_len = query_len
     resolved_hash = query_sha256_8
@@ -113,6 +134,8 @@ def build_ask_metric(
             resolved_len = len(query)
         if resolved_hash is None and query:
             resolved_hash = hash_query_sha256_8(query)
+
+    sid = (session_id or "").strip() or None
 
     record: dict[str, Any] = {
         "request_id": request_id,
@@ -132,6 +155,23 @@ def build_ask_metric(
         "retrieve_ms": retrieve_ms,
         "context_chunks": context_chunks,
         "citations_count": citations_count,
+        "agent_steps": agent_steps,
+        "max_steps": max_steps,
+        "tool_calls_count": tool_calls_count,
+        "tools_used": tools_used,
+        "agent_final_phase": agent_final_phase,
+        "agent_phase_trace": agent_phase_trace,
+        "degraded_to": degraded_to,
+        "stop_reason": stop_reason,
+        "session_id": sid,
+        "session_id_sha256_8": session_id_sha256_8,
+        "history_messages": history_messages,
+        "history_chars": history_chars,
+        "session_turns_kept": session_turns_kept,
+        "session_msgs": session_msgs,
+        "session_chars": session_chars,
+        "session_summarized": session_summarized,
+        "session_truncated_msgs": session_truncated_msgs,
     }
     record.update(_extract_tokens(usage))
     return record

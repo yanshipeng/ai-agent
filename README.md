@@ -7,8 +7,9 @@
 | 探活 / 问答 | `GET /health`、`POST /ask` |
 | 直连 LLM | `mode=llm`（默认）：错误映射、重试、兜底 |
 | RAG | `mode=rag`：本地索引检索 → 带 citations 回答 |
+| Agent Tools | `mode=agent`：真实 tool_calls、状态机、超限降级、多轮 session |
 | 可观测 | JSON 结构化日志、`requests.jsonl`、按 `request_id` 追踪 |
-| 评测 | 契约/映射单测、Week1 回归、Week2 RAG 评测与 A/B |
+| 评测 | Week1 回归、Week2 RAG 评测、Week3 Agent 评测（`run_agent_eval.py`） |
 
 **按周学习文档（详细操作与踩坑）：**
 
@@ -16,6 +17,7 @@
 |------|------|
 | [`docs/week1_学习指南.md`](docs/week1_学习指南.md) | Day1–5：起服务、LLMClient、错误处理、日志、契约与回归 |
 | [`docs/week2_学习指南.md`](docs/week2_学习指南.md) | Day6–10：采集 → 清洗 → 切块 → 索引/检索 → RAG → 评测 |
+| [`docs/week3_学习指南.md`](docs/week3_学习指南.md) | **已完成**：Tools / Agent 状态机 / 多轮 session / 评测 |
 | [`docs/日志阅读指南.md`](docs/日志阅读指南.md) | 怎么读服务日志（含 `hint`） |
 
 ---
@@ -54,6 +56,11 @@ curl -s http://127.0.0.1:8000/ask \
 curl -s 'http://127.0.0.1:8000/ask?mode=rag' \
   -H 'Content-Type: application/json' \
   -d '{"query":"Android ANR 怎么排查","top_k":5}'
+
+# Agent（真实 tool_calls；需索引）
+curl -s 'http://127.0.0.1:8000/ask?mode=agent' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"Android ANR 怎么排查"}'
 ```
 
 ---
@@ -79,16 +86,21 @@ ai_start_anget/
 │       ├── retriever.py              # retrieve(query) → TopK
 │       ├── rag.py                    # RAG prompt / citations
 │       └── jsonl_io.py               # JSONL 读写工具
+│   └── agent/                        # Agent：工具 + Tool Runner（mode=agent）
+│       ├── tools.py                  # kb_search / kb_get_chunk
+│       └── runner.py                 # 解析 tool_calls → 执行 → 循环
 │
 ├── scripts/                          # 运维 / 流水线 / 冒烟验收（见下表分类）
 ├── tests/                            # pytest：契约 / 映射 / 单元测试（mock，不打网）
 ├── docs/                             # 学习与运维文档
 │   ├── week1_学习指南.md
 │   ├── week2_学习指南.md
+│   ├── week3_学习指南.md
 │   └── 日志阅读指南.md
 ├── data/stability_kb/                # 语料与索引（本地数据，通常不入库）
 ├── eval_samples.jsonl                # Week1 回归样例（mode=llm）
 ├── eval_samples_rag.jsonl            # Week2 RAG 评测样例
+├── agent_eval_samples.jsonl          # Week3 Agent 评测样例（≥30，默认 A=ANR）
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -109,12 +121,15 @@ ai_start_anget/
 | | `retrieve_kb.py` | 对索引做 TopK 检索（交互冒烟） |
 | | `run_day6_7.sh` | 清洗 + 切块一键 |
 | **冒烟 / 验收 / 回归** | `smoke_llm_client.py` | **不启 FastAPI**，连续调 DeepSeek 冒烟 |
-| （会打真实服务或本机索引） | `run_day5.sh` | Week1 一键：pytest → 启服务 → `/ask` 回归 → 停服务 |
+| （会打真实服务或本机索引） | `smoke_agent_tools.py` | Week3：5 次 `mode=agent`，验收真实 tool_calls |
+| | `smoke_session_memory.py` | Week3：同 session 5 轮约束记忆 |
+| | `run_day5.sh` | Week1 一键：pytest → 启服务 → `/ask` 回归 → 停服务 |
 | | `run_eval.py` | Week1：对已启动服务批量 `POST /ask`，写报告 |
 | | `verify_kb_retrieve.py` | 索引 + `retrieve` 契约 + 固定 query 冒烟 |
 | | `verify_ask_rag.py` | 核对 RAG 响应的 citations 是否都来自本地 index |
 | | `eval_rag_ask.py` | RAG 快速验收（约 20 query，需服务） |
 | | `run_rag_eval.py` | Day10 评测闭环（≥50）+ 可选单变量 A/B |
+| | `run_agent_eval.py` | Week3 Agent 评测（≥30）→ `agent_eval_report.json` |
 
 ### `tests/`（`pytest -q`，默认 mock，不依赖真实 Key）
 
@@ -130,6 +145,9 @@ ai_start_anget/
 | `test_rag_ask.py` | 接口契约 | RAG prompt、citations、`/ask?mode=rag` |
 | `test_eval_rag_ask.py` | 单元测试 | `eval_rag_ask` 判定逻辑（不打 LLM） |
 | `test_run_rag_eval.py` | 单元测试 | `run_rag_eval` 报告/分布逻辑（不打 LLM） |
+| `test_run_agent_eval.py` | 单元测试 | `run_agent_eval` 报告/样例分布（不打 LLM） |
+| `test_agent_tools.py` | 单元/契约 | 工具校验、Tool Runner、`/ask?mode=agent` 指标 |
+| `test_session_conversation.py` | 单元/契约 | 多轮 session 滑窗/截断/摘要 |
 
 > **怎么区分**：`tests/` = 自动化断言、CI 友好；`scripts/` 里的冒烟/回归 = 需要本机服务或真实索引/Key，用于验收与留档报告。详细步骤见对应周学习指南。
 
@@ -150,6 +168,17 @@ ai_start_anget/
 | `APP_VERSION` | 否 | `0.1.0ba` | `/health` 版本 |
 | `KB_INDEX_DIR` | 否 | `data/stability_kb/index` | RAG 索引目录 |
 | `RAG_TOP_K` | 否 | `5` | RAG 默认检索条数 |
+| `AGENT_MAX_STEPS` | 否 | `5` | Agent Plan 最大轮数 |
+| `AGENT_MAX_TOTAL_TIME_MS` | 否 | `20000` | Agent 整单总耗时上限（ms） |
+| `AGENT_ON_MAX_STEPS` | 否 | `rag` | 超步：`rag` / `clarify` / `error` |
+| `AGENT_TOOL_TIMEOUT_SECONDS` | 否 | `10` | 单次工具执行超时 |
+| `SESSION_MAX_TURNS` | 否 | `8` | 多轮滑窗：保留最近 N 轮 |
+| `SESSION_MAX_CHARS` | 否 | `20000` | 上下文总字符预算；超则摘要/再裁 |
+| `SESSION_TOOL_RESULT_MAX_CHARS` | 否 | `4000` | 单条 tool 结果截断 |
+| `SESSION_CONTENT_MAX_CHARS` | 否 | `8000` | 单条 user/assistant 截断 |
+| `SESSION_ENABLE_SUMMARY` | 否 | `true` | 超预算时是否摘要旧对话 |
+| `SESSION_SUMMARY_USE_LLM` | 否 | `false` | `false`=抽取式；`true`=调 LLM 摘要 |
+| `SESSION_TTL_SECONDS` | 否 | `3600` | 进程内 session 过期秒数 |
 
 ---
 
@@ -166,15 +195,19 @@ ai_start_anget/
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `query` | 是 | 非空；最大 2000 字符 |
-| `session_id` / `client_tag` | 否 | 会话 / 来源 |
-| `mode` | 否 | `llm`（默认）或 `rag`；也可用 `?mode=rag` |
-| `top_k` | 否 | RAG 检索条数 |
+| `session_id` / `client_tag` | 否 | 会话 / 来源；同 `session_id` 会带入历史（进程内） |
+| `mode` | 否 | `llm`（默认）/ `rag` / `agent`；也可用 `?mode=` |
+| `top_k` | 否 | RAG / Agent 检索条数 |
 
 - **mode=llm**：直连模型，`citations` 为空数组  
 - **mode=rag**：先检索再回答，`citations` 必填；索引未建 → `503 INDEX_NOT_READY`
+- **mode=agent**：DeepSeek 真实 `tool_calls`（`kb_search` / `kb_get_chunk`）多轮循环；`meta` 含 `agent_steps` / `tool_calls_count` / `tools_used`
+- **多轮**：传同一 `session_id` 即带历史；滑窗 / 截断 /（可选）摘要见 [Week3](docs/week3_学习指南.md)
+- **指标**：`requests.jsonl` 含 `session_id` / `history_messages` / `history_chars`；`python scripts/stats_requests.py` 可看 p95，以及 with/without session 对比
+- **验收**：`python scripts/smoke_session_memory.py`（同 session 5 轮约束记忆）
 
 统一错误体：`{"request_id","code","message"}`。错误码、重试/兜底策略见 [Week1 学习指南](docs/week1_学习指南.md)。
-
+工具失败可控错误：`TOOL_INVALID_ARGS` / `TOOL_TIMEOUT`（不崩服务）。
 ---
 
 ## 5. 知识库 / RAG（最短路径）
@@ -205,5 +238,7 @@ python scripts/stats_requests.py --path ./requests.jsonl
 python scripts/trace_request.py <request_id> --log /tmp/app.log
 python scripts/run_eval.py --samples ./eval_samples.jsonl
 python scripts/run_rag_eval.py
+python scripts/run_agent_eval.py
+python scripts/smoke_agent_tools.py --log /tmp/app.log
 pytest -q
 ```

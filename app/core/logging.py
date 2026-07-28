@@ -46,6 +46,11 @@ EVENT_RETRIEVE_START = "retrieve_start"
 EVENT_RETRIEVE_END = "retrieve_end"
 EVENT_LLM_CALL_START = "llm_call_start"
 EVENT_LLM_CALL_END = "llm_call_end"
+EVENT_AGENT_STEP = "agent_step"
+EVENT_AGENT_PHASE = "agent_phase"
+EVENT_AGENT_STOP = "agent_stop"
+EVENT_TOOL_CALL_START = "tool_call_start"
+EVENT_TOOL_CALL_END = "tool_call_end"
 EVENT_REQUEST_SUCCESS = "request_success"
 EVENT_REQUEST_ERROR = "request_error"
 
@@ -61,6 +66,11 @@ EVENT_HINTS: dict[str, str] = {
     EVENT_RETRIEVE_END: "RAG 模式：检索结束，已拼好带编号的 Context，准备交给大模型",
     EVENT_LLM_CALL_START: "开始调用 DeepSeek 大模型生成回答",
     EVENT_LLM_CALL_END: "大模型调用结束（成功 / 兜底 / 失败见 ok、error_code）",
+    EVENT_AGENT_STEP: "Agent：一次 Plan 轮次（可能发起 tool_calls）",
+    EVENT_AGENT_PHASE: "Agent 状态机相位切换：Plan / Act / Observe / Final",
+    EVENT_AGENT_STOP: "Agent 终止：见 stop_reason（final_answer/clarify/degraded_to_rag/max_steps/timeout/upstream_error）",
+    EVENT_TOOL_CALL_START: "Agent：开始执行模型发起的真实 tool_calls",
+    EVENT_TOOL_CALL_END: "Agent：工具执行结束（成功或可控错误码）",
     EVENT_REQUEST_SUCCESS: "本次 /ask 整单成功，已写 requests.jsonl 指标",
     EVENT_REQUEST_ERROR: "本次 /ask 失败，见 error_code 与 status_code",
 }

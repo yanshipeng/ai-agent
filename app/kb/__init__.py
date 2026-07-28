@@ -47,7 +47,7 @@ from app.kb.rag import (
     hits_to_citations,
     run_rag_retrieve,
 )
-from app.kb.retriever import RESULT_FIELDS, clear_index_cache, get_index, retrieve
+from app.kb.retriever import RESULT_FIELDS, clear_index_cache, get_chunk, get_index, retrieve
 
 __all__ = [
     "ASK_MODE_LLM",
@@ -70,6 +70,7 @@ __all__ = [
     "dedupe_key",
     "embed_query",
     "embed_texts",
+    "get_chunk",
     "get_index",
     "hits_to_citations",
     "html_to_markdown",

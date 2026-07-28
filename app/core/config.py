@@ -47,6 +47,40 @@ class Settings(BaseSettings):
     )
     rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
 
+    # Agent / Tools（第三周）
+    agent_max_steps: int = Field(default=5, alias="AGENT_MAX_STEPS")
+    agent_max_total_time_ms: int = Field(
+        default=20_000,
+        alias="AGENT_MAX_TOTAL_TIME_MS",
+    )
+    agent_on_max_steps: str = Field(
+        default="rag",
+        alias="AGENT_ON_MAX_STEPS",
+        description="超 max_steps：rag / clarify / error",
+    )
+    agent_tool_timeout_seconds: float = Field(
+        default=10.0,
+        alias="AGENT_TOOL_TIMEOUT_SECONDS",
+    )
+
+    # 多轮 session 上下文（第三周）：滑窗 / 截断 / 可选摘要
+    session_max_turns: int = Field(default=8, alias="SESSION_MAX_TURNS")
+    session_max_chars: int = Field(default=20_000, alias="SESSION_MAX_CHARS")
+    session_tool_result_max_chars: int = Field(
+        default=4_000,
+        alias="SESSION_TOOL_RESULT_MAX_CHARS",
+    )
+    session_content_max_chars: int = Field(
+        default=8_000,
+        alias="SESSION_CONTENT_MAX_CHARS",
+    )
+    session_enable_summary: bool = Field(default=True, alias="SESSION_ENABLE_SUMMARY")
+    session_summary_use_llm: bool = Field(
+        default=False,
+        alias="SESSION_SUMMARY_USE_LLM",
+    )
+    session_ttl_seconds: float = Field(default=3600.0, alias="SESSION_TTL_SECONDS")
+
 
 @lru_cache
 def get_settings() -> Settings:

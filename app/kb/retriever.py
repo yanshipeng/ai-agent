@@ -93,6 +93,30 @@ def format_hit(
     return row
 
 
+def get_chunk(
+    chunk_id: str,
+    *,
+    index_dir: Path | str = DEFAULT_INDEX_DIR,
+) -> dict[str, Any] | None:
+    """按 chunk_id 取索引中的全文与元数据；不存在返回 None。"""
+    cid = (chunk_id or "").strip()
+    if not cid:
+        return None
+    index = get_index(index_dir)
+    for meta in index["meta"]:
+        if str(meta.get("chunk_id") or "") == cid:
+            return {
+                "chunk_id": meta.get("chunk_id"),
+                "title": meta.get("title"),
+                "url": meta.get("url"),
+                "section_path": meta.get("section_path") or "",
+                "is_code": bool(meta.get("is_code")),
+                "category": meta.get("category"),
+                "text": str(meta.get("text") or ""),
+            }
+    return None
+
+
 def retrieve(
     query: str,
     top_k: int = DEFAULT_TOP_K,

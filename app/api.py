@@ -1,34 +1,34 @@
 """HTTP 路由：GET /health、POST /ask。
 
 ==========================================================================
-/ask 在整条产品链路里的位置
+/ask 在整条产品链路里的位置（三 mode）
 ==========================================================================
-  用户问题
-    →（可选）本地 retrieve TopK
-    → 拼 messages（llm 仅 user；rag = system约束 + Context + 问题）
-    → LLMClient.chat
-    → 返回 answer + citations + meta
-    → 写结构化日志 + requests.jsonl
+  mode=llm   ：拼 [history?] + user → LLMClient.chat
+  mode=rag   ：retrieve → system+history+Context user → chat
+  mode=agent ：load history → run_agent_loop（真实 tool_calls 状态机）
+
+成功后：
+  - 有 session_id → 写回 session_store（llm/rag 只存短 user/assistant）
+  - 写结构化日志 + requests.jsonl（含 agent_* / session_id / history_*）
 
 ==========================================================================
-为什么 mode 同时支持 query (?mode=rag) 和 body.mode
+为什么 mode 同时支持 query (?mode=) 和 body.mode
 ==========================================================================
-  curl 示例习惯写 /ask?mode=rag；前端也可能放 JSON body。
-  约定：query 参数优先，便于调试时快速切换而不改 body。
+  curl 习惯写 /ask?mode=agent；前端也可能放 JSON。
+  约定：query 参数优先，便于调试时改 URL 不改 body。
 
 为什么默认 mode=llm？
-  兼容第一周契约与回归（citations=[]）；RAG 显式打开，避免无索引时全挂。
+  兼容 Week1 契约与回归（citations=[]）；rag/agent 显式打开。
 
-为什么成功路径也要写 metrics（即使 fallback）？
-  评测与排障依赖「每次请求一行」；失败/兜底都要能统计。
+多轮 session（Week3）：
+  load_session_history → compact（截断/滑窗/摘要）→ 注入 messages
+  history_metric_fields → jsonl 的 session_id / history_messages / history_chars
 
 流程步骤：
-  1) 生成 request_id（UUID）——整条日志链的主键
-  2) request_start（含 query_len / query_sha256_8，不含原文）
-  3) mode=rag → retrieve_start/end；mode=llm → 跳过检索
-  4) llm_call_*（在 LLMClient 内）
-  5) request_success 或 request_error + 写 requests.jsonl
-  6) 校验失败：validate_failed → request_error → 400 INVALID_ARGUMENT
+  1) 生成 request_id（UUID）
+  2) request_start（query_len / query_sha256_8 / session 指纹）
+  3) 按 mode 分支（rag 检索 / agent 状态机 / llm 直连）
+  4) 成功落 session + meta + metrics；失败写 error_code 不崩服务
 ==========================================================================
 """
 
@@ -44,6 +44,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.agent.runner import AGENT_MAX_STEPS, AGENT_NO_ANSWER, AGENT_TIMEOUT, run_agent_loop
+from app.agent.tools import (
+    ASK_MODE_AGENT,
+    TOOL_INVALID_ARGS,
+    TOOL_NOT_FOUND,
+    TOOL_TIMEOUT,
+)
 from app.core.config import get_settings
 from app.core.logging import (
     EVENT_REQUEST_ERROR,
@@ -60,16 +67,34 @@ from app.core.logging import (
 from app.kb.rag import (
     ASK_MODE_LLM,
     ASK_MODE_RAG,
-    ASK_MODES,
+    ASK_MODES as RAG_ASK_MODES,
     run_rag_retrieve,
+)
+from app.services.conversation import (
+    CompactStats,
+    compact_messages,
+    messages_for_storage,
+    plain_chat_history,
+    total_chars,
 )
 from app.services.llm_client import (
     LLMClient,
     LLMError,
+    UPSTREAM_5XX,
+    UPSTREAM_BAD_REQUEST,
+    UPSTREAM_RATE_LIMITED,
+    UPSTREAM_TIMEOUT,
+    UPSTREAM_UNAUTHORIZED,
+    UPSTREAM_UNKNOWN,
     map_llm_error_to_http,
     public_error_message,
 )
 from app.services.metrics_store import append_request_metric, build_ask_metric
+from app.services.session_store import (
+    get_session_messages,
+    set_session_messages,
+    touch_and_prune,
+)
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -79,8 +104,152 @@ QUERY_MAX_LENGTH = 2000
 CODE_INVALID_ARGUMENT = "INVALID_ARGUMENT"
 CODE_INDEX_NOT_READY = "INDEX_NOT_READY"
 
-AskMode = Literal["llm", "rag"]
+ASK_MODES = (*RAG_ASK_MODES, ASK_MODE_AGENT)
+AskMode = Literal["llm", "rag", "agent"]
 
+
+def session_id_fingerprint(session_id: str | None) -> str | None:
+    """日志/metrics 用：session_id 指纹，不落原文。"""
+    sid = (session_id or "").strip()
+    if not sid:
+        return None
+    return query_sha256_8(sid)
+
+
+def load_session_history(
+    session_id: str | None,
+    *,
+    client: LLMClient | None = None,
+    request_id: str | None = None,
+    for_agent: bool = False,
+) -> tuple[list[dict[str, Any]], CompactStats | None]:
+    """读取并压缩同 session 历史；无 session 返回 ([], None)。
+
+    for_agent=False（llm/rag）：
+      只保留 user/assistant，避免把上一轮 agent 的 tool 轨迹塞进普通聊天。
+    for_agent=True：
+      保留截断后的 tool 轨迹，方便续轮排障。
+
+    compact 顺序：单条截断 → 滑窗 →（可选）超预算摘要；统计写入日志 context_compact。
+    """
+    sid = (session_id or "").strip()
+    if not sid:
+        return [], None
+    settings = get_settings()
+    touch_and_prune(ttl_seconds=float(settings.session_ttl_seconds))
+    raw = get_session_messages(sid)
+    if not raw:
+        return [], None
+    compacted = compact_messages(
+        raw,
+        client=client if settings.session_summary_use_llm else None,
+        request_id=request_id,
+    )
+    history = compacted.messages
+    if not for_agent:
+        history = plain_chat_history(history)
+    return history, compacted.stats
+
+
+def persist_plain_turn(
+    session_id: str | None,
+    *,
+    history: list[dict[str, Any]],
+    query: str,
+    answer: str,
+) -> None:
+    """llm/rag 成功后：存「历史 + 本轮 user/assistant」（不含 RAG Context）。"""
+    sid = (session_id or "").strip()
+    if not sid:
+        return
+    settings = get_settings()
+    to_store = messages_for_storage(
+        list(history)
+        + [
+            {"role": "user", "content": query},
+            {"role": "assistant", "content": answer},
+        ]
+    )
+    set_session_messages(
+        sid,
+        to_store,
+        ttl_seconds=float(settings.session_ttl_seconds),
+    )
+
+
+def persist_agent_messages(
+    session_id: str | None,
+    messages: list[dict[str, Any]],
+) -> None:
+    """agent 成功后：覆盖写入本轮完整轨迹（已去 system、已截断）。"""
+    sid = (session_id or "").strip()
+    if not sid or not messages:
+        return
+    settings = get_settings()
+    set_session_messages(
+        sid,
+        messages_for_storage(messages),
+        ttl_seconds=float(settings.session_ttl_seconds),
+    )
+
+
+def _session_meta_fields(stats: CompactStats | None) -> dict[str, Any]:
+    if stats is None:
+        return {}
+    return {
+        "session_turns_kept": stats.turns_kept,
+        "session_msgs": stats.output_messages,
+        "session_chars": stats.output_chars,
+        "session_summarized": stats.summarized,
+        "session_truncated_msgs": stats.truncated_msgs,
+    }
+
+
+def history_metric_fields(
+    session_id: str | None,
+    history: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """requests.jsonl / meta：session_id + history_messages + history_chars（无原文）。"""
+    sid = (session_id or "").strip()
+    if not sid:
+        return {}
+    hist = history or []
+    return {
+        "session_id": sid,
+        "history_messages": len(hist),
+        "history_chars": total_chars(hist),
+    }
+
+
+# Agent / Tool 可控错误 → HTTP（不崩服务）
+_AGENT_ERROR_HTTP: dict[str, int] = {
+    TOOL_INVALID_ARGS: 400,
+    TOOL_TIMEOUT: 504,
+    TOOL_NOT_FOUND: 400,
+    AGENT_MAX_STEPS: 504,
+    AGENT_NO_ANSWER: 502,
+    AGENT_TIMEOUT: 504,
+}
+
+_AGENT_PUBLIC_MESSAGES: dict[str, str] = {
+    TOOL_INVALID_ARGS: "tool arguments invalid",
+    TOOL_TIMEOUT: "tool execution timed out",
+    TOOL_NOT_FOUND: "unknown tool",
+    AGENT_MAX_STEPS: "agent exceeded max tool steps",
+    AGENT_NO_ANSWER: "agent finished without an answer",
+    AGENT_TIMEOUT: "agent exceeded max total time",
+}
+
+_ERROR_FROM_LLM = frozenset(
+    {
+        UPSTREAM_UNAUTHORIZED,
+        UPSTREAM_RATE_LIMITED,
+        UPSTREAM_TIMEOUT,
+        UPSTREAM_BAD_REQUEST,
+        UPSTREAM_5XX,
+        UPSTREAM_UNKNOWN,
+    }
+)
 
 class AskRequest(BaseModel):
     """POST /ask 请求体。"""
@@ -90,7 +259,7 @@ class AskRequest(BaseModel):
     client_tag: str | None = Field(default=None, description="来源标识")
     mode: AskMode = Field(
         default=ASK_MODE_LLM,
-        description="llm=直连模型；rag=检索增强（也可用 query ?mode=rag）",
+        description="llm=直连；rag=检索增强；agent=工具调用循环（也可用 ?mode=）",
     )
     top_k: int | None = Field(
         default=None,
@@ -294,17 +463,18 @@ def ask(
     request: Request,
     mode: AskMode | None = Query(
         default=None,
-        description="llm | rag；优先于 body.mode（例：/ask?mode=rag）",
+        description="llm | rag | agent；优先于 body.mode（例：/ask?mode=agent）",
     ),
 ) -> AskResponse | JSONResponse:
-    """问答接口：mode=llm 直连模型；mode=rag 检索增强且 citations 必填。"""
+    """问答接口：mode=llm 直连；mode=rag 检索增强；mode=agent 真实 tool_calls 循环。"""
     request_id = str(uuid.uuid4())
     started = time.perf_counter()
     client = get_llm_client(request)
     resolved_mode = resolve_ask_mode(query_mode=mode, body_mode=body.mode)
-    top_k = resolve_top_k(body.top_k) if resolved_mode == ASK_MODE_RAG else None
+    top_k = resolve_top_k(body.top_k) if resolved_mode in {ASK_MODE_RAG, ASK_MODE_AGENT} else None
     q_len = len(body.query)
     q_hash = query_sha256_8(body.query)
+    sid_fp = session_id_fingerprint(body.session_id)
     base_fields = {
         "request_id": request_id,
         "path": request.url.path,
@@ -312,24 +482,52 @@ def ask(
         "query_len": q_len,
         "query_sha256_8": q_hash,
         "mode": resolved_mode,
+        "session_id_sha256_8": sid_fp,
     }
+
+    if resolved_mode == ASK_MODE_AGENT:
+        hint = "收到 /ask：mode=agent，将走 Tool Runner（真实 tool_calls）"
+    elif resolved_mode == ASK_MODE_RAG:
+        hint = "收到 /ask：mode=rag，将先本地检索再问大模型"
+    else:
+        hint = "收到 /ask：mode=llm，直接把问题交给大模型（不查知识库）"
+    if body.session_id:
+        hint += f"；多轮 session（指纹 {sid_fp}）"
 
     log_event(
         logger,
         EVENT_REQUEST_START,
         **base_fields,
         top_k=top_k,
-        hint=(
-            "收到 /ask：mode=rag，将先本地检索再问大模型"
-            if resolved_mode == ASK_MODE_RAG
-            else "收到 /ask：mode=llm，直接把问题交给大模型（不查知识库）"
-        ),
+        hint=hint,
     )
 
+    if resolved_mode == ASK_MODE_AGENT:
+        return _ask_agent(
+            body=body,
+            request=request,
+            client=client,
+            request_id=request_id,
+            started=started,
+            base_fields=base_fields,
+            q_len=q_len,
+            q_hash=q_hash,
+            top_k=top_k,
+            sid_fp=sid_fp,
+        )
+
+    history, session_stats = load_session_history(
+        body.session_id,
+        client=client,
+        request_id=request_id,
+        for_agent=False,
+    )
+    hist_fields = history_metric_fields(body.session_id, history)
+    session_compact = _session_meta_fields(session_stats)
     citations: list[dict[str, Any]] = []
     retrieve_ms: int | None = None
     context_chunks = 0
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
 
     if resolved_mode == ASK_MODE_RAG:
         index_dir = get_settings().kb_index_dir
@@ -378,6 +576,8 @@ def ask(
                     retrieve_ms=None,
                     context_chunks=0,
                     citations_count=0,
+                    session_id_sha256_8=sid_fp,
+                    **hist_fields,
                 )
             )
             return JSONResponse(
@@ -388,7 +588,9 @@ def ask(
                     message="knowledge index not ready; run build_kb_index.py",
                 ),
             )
-        messages = rag_pack["messages"]
+        rag_messages = rag_pack["messages"]
+        # system + 历史 + 本轮（含 Context 的 user）；历史不含 RAG Context
+        messages = [rag_messages[0], *history, rag_messages[-1]]
         citations = rag_pack["citations"]
         retrieve_ms = rag_pack["retrieve_ms"]
         context_chunks = rag_pack["context_chunks"]
@@ -409,7 +611,7 @@ def ask(
             ),
         )
     else:
-        messages = [{"role": "user", "content": body.query}]
+        messages = [*history, {"role": "user", "content": body.query}]
 
     try:
         result = client.chat(messages, request_id=request_id)
@@ -447,6 +649,8 @@ def ask(
                 retrieve_ms=retrieve_ms,
                 context_chunks=context_chunks,
                 citations_count=len(citations),
+                session_id_sha256_8=sid_fp,
+                **hist_fields,
             )
         )
         return JSONResponse(
@@ -457,6 +661,13 @@ def ask(
                 message=public_error_message(error_code),
             ),
         )
+
+    persist_plain_turn(
+        body.session_id,
+        history=history,
+        query=body.query,
+        answer=result.answer,
+    )
 
     latency_ms_total = int((time.perf_counter() - started) * 1000)
     meta = _build_meta(
@@ -470,6 +681,9 @@ def ask(
         retrieve_ms=retrieve_ms,
         context_chunks=context_chunks,
         citations_count=len(citations),
+        session_id_sha256_8=sid_fp,
+        **hist_fields,
+        **session_compact,
     )
     log_event(
         logger,
@@ -487,8 +701,12 @@ def ask(
         context_chunks=context_chunks,
         citations_count=len(citations),
         top_k=top_k,
+        history_messages=hist_fields.get("history_messages"),
+        history_chars=hist_fields.get("history_chars"),
+        **session_compact,
         hint=(
             f"整单成功：mode={resolved_mode}，总耗时 {latency_ms_total}ms，"
+            f"history_messages={hist_fields.get('history_messages', 0)}，"
             f"citations={len(citations)}；可用 trace_request.py 按 request_id 回放"
         ),
     )
@@ -512,6 +730,9 @@ def ask(
             retrieve_ms=retrieve_ms,
             context_chunks=context_chunks,
             citations_count=len(citations),
+            session_id_sha256_8=sid_fp,
+            **hist_fields,
+            **session_compact,
         )
     )
     return AskResponse(
@@ -520,6 +741,219 @@ def ask(
         citations=[Citation(**c) for c in citations],
         latency_ms=result.latency_ms,
         model=result.model,
+        meta=meta,
+    )
+
+
+def _ask_agent(
+    *,
+    body: AskRequest,
+    request: Request,
+    client: LLMClient,
+    request_id: str,
+    started: float,
+    base_fields: dict[str, Any],
+    q_len: int,
+    q_hash: str,
+    top_k: int | None,
+    sid_fp: str | None = None,
+) -> AskResponse | JSONResponse:
+    """mode=agent：Plan→Act→Observe→Final；超步降级 RAG/澄清，超时兜底带 request_id。"""
+    history, session_stats = load_session_history(
+        body.session_id,
+        client=client,
+        request_id=request_id,
+        for_agent=True,
+    )
+    hist_fields = history_metric_fields(body.session_id, history)
+    agent = run_agent_loop(
+        body.query,
+        client=client,
+        request_id=request_id,
+        index_dir=get_settings().kb_index_dir,
+        history_messages=history or None,
+    )
+    latency_ms_total = int((time.perf_counter() - started) * 1000)
+    tools_used = list(agent.tools_used)
+    citations = agent.citations
+    session_compact = _session_meta_fields(session_stats)
+
+    if agent.http_error_code:
+        error_code = agent.http_error_code
+        http_status = _AGENT_ERROR_HTTP.get(error_code, 502)
+        if error_code in _ERROR_FROM_LLM:
+            http_status, error_code = map_llm_error_to_http(
+                LLMError(error_code, error_code)
+            )
+        message = _AGENT_PUBLIC_MESSAGES.get(error_code) or public_error_message(error_code)
+        log_event(
+            logger,
+            EVENT_REQUEST_ERROR,
+            level=logging.WARNING,
+            **base_fields,
+            status_code=http_status,
+            ok=False,
+            latency_ms_total=latency_ms_total,
+            error_code=error_code,
+            agent_steps=agent.agent_steps,
+            tool_calls_count=agent.tool_calls_count,
+            tools_used=tools_used,
+            citations_count=len(citations),
+            agent_final_phase=agent.final_phase,
+            agent_phase_trace=agent.phase_trace,
+            degraded_to=agent.degraded_to,
+            stop_reason=agent.stop_reason,
+            max_steps=agent.max_steps,
+            history_messages=hist_fields.get("history_messages"),
+            history_chars=hist_fields.get("history_chars"),
+            **session_compact,
+            hint=(
+                f"Agent 失败（可控）：error_code={error_code}，"
+                f"stop_reason={agent.stop_reason}，"
+                f"steps={agent.agent_steps}/{agent.max_steps}，"
+                f"tool_calls={agent.tool_calls_count}，phase={agent.final_phase}"
+            ),
+        )
+        append_request_metric(
+            build_ask_metric(
+                request_id=request_id,
+                path=request.url.path,
+                ok=False,
+                status_code=http_status,
+                latency_ms_total=latency_ms_total,
+                latency_ms_llm=agent.latency_ms,
+                llm_model=agent.model,
+                retry_count=agent.retry_count,
+                finish_reason=agent.finish_reason,
+                error_code=error_code,
+                query_len=q_len,
+                query_sha256_8=q_hash,
+                usage=agent.usage,
+                mode=ASK_MODE_AGENT,
+                top_k=top_k,
+                retrieve_ms=agent.retrieve_ms,
+                context_chunks=len(citations),
+                citations_count=len(citations),
+                agent_steps=agent.agent_steps,
+                max_steps=agent.max_steps,
+                tool_calls_count=agent.tool_calls_count,
+                tools_used=tools_used,
+                agent_final_phase=agent.final_phase,
+                agent_phase_trace=agent.phase_trace,
+                degraded_to=agent.degraded_to,
+                stop_reason=agent.stop_reason,
+                session_id_sha256_8=sid_fp,
+                **hist_fields,
+                **session_compact,
+            )
+        )
+        return JSONResponse(
+            status_code=http_status,
+            content=build_error_body(
+                request_id=request_id,
+                code=error_code,
+                message=message,
+            ),
+        )
+
+    persist_agent_messages(body.session_id, agent.session_messages)
+
+    meta = _build_meta(
+        finish_reason=agent.finish_reason,
+        usage=agent.usage,
+        fallback=agent.fallback,
+        error_code=agent.error_code,
+        retry_count=agent.retry_count,
+        mode=ASK_MODE_AGENT,
+        top_k=top_k,
+        retrieve_ms=agent.retrieve_ms,
+        context_chunks=len(citations),
+        citations_count=len(citations),
+        agent_steps=agent.agent_steps,
+        tool_calls_count=agent.tool_calls_count,
+        tools_used=tools_used,
+        agent_final_phase=agent.final_phase,
+        agent_phase_trace=agent.phase_trace,
+        degraded_to=agent.degraded_to,
+        stop_reason=agent.stop_reason,
+        max_steps=agent.max_steps,
+        session_id_sha256_8=sid_fp,
+        **hist_fields,
+        **session_compact,
+    )
+    log_event(
+        logger,
+        EVENT_REQUEST_SUCCESS,
+        **base_fields,
+        status_code=200,
+        ok=True,
+        latency_ms_total=latency_ms_total,
+        llm_provider=LLM_PROVIDER,
+        llm_model=agent.model,
+        finish_reason=agent.finish_reason,
+        retry_count=agent.retry_count,
+        agent_steps=agent.agent_steps,
+        max_steps=agent.max_steps,
+        tool_calls_count=agent.tool_calls_count,
+        tools_used=tools_used,
+        citations_count=len(citations),
+        top_k=top_k,
+        agent_final_phase=agent.final_phase,
+        agent_phase_trace=agent.phase_trace,
+        degraded_to=agent.degraded_to,
+        stop_reason=agent.stop_reason,
+        error_code=agent.error_code if agent.fallback else None,
+        history_messages=hist_fields.get("history_messages"),
+        history_chars=hist_fields.get("history_chars"),
+        **session_compact,
+        hint=(
+            f"整单成功：mode=agent，stop_reason={agent.stop_reason}，"
+            f"steps={agent.agent_steps}/{agent.max_steps}，"
+            f"tool_calls={agent.tool_calls_count}，tools={tools_used}，"
+            f"phase_trace={agent.phase_trace}，degraded_to={agent.degraded_to}，"
+            f"history_messages={hist_fields.get('history_messages', 0)}，"
+            f"总耗时 {latency_ms_total}ms"
+        ),
+    )
+    append_request_metric(
+        build_ask_metric(
+            request_id=request_id,
+            path=request.url.path,
+            ok=True,
+            status_code=200,
+            latency_ms_total=latency_ms_total,
+            latency_ms_llm=agent.latency_ms,
+            llm_model=agent.model,
+            retry_count=agent.retry_count,
+            finish_reason=agent.finish_reason,
+            error_code=agent.error_code if agent.fallback else None,
+            query_len=q_len,
+            query_sha256_8=q_hash,
+            usage=agent.usage,
+            mode=ASK_MODE_AGENT,
+            top_k=top_k,
+            retrieve_ms=agent.retrieve_ms,
+            context_chunks=len(citations),
+            citations_count=len(citations),
+            agent_steps=agent.agent_steps,
+            max_steps=agent.max_steps,
+            tool_calls_count=agent.tool_calls_count,
+            tools_used=tools_used,
+            agent_final_phase=agent.final_phase,
+            agent_phase_trace=agent.phase_trace,
+            degraded_to=agent.degraded_to,
+            stop_reason=agent.stop_reason,
+            session_id_sha256_8=sid_fp,
+            **hist_fields,
+            **session_compact,
+        )
+    )
+    return AskResponse(
+        request_id=request_id,
+        answer=agent.answer,
+        citations=[Citation(**c) for c in citations],
+        latency_ms=agent.latency_ms,
+        model=agent.model,
         meta=meta,
     )
 
@@ -536,6 +970,23 @@ def _build_meta(
     retrieve_ms: int | None = None,
     context_chunks: int | None = None,
     citations_count: int | None = None,
+    agent_steps: int | None = None,
+    tool_calls_count: int | None = None,
+    tools_used: list[str] | None = None,
+    agent_final_phase: str | None = None,
+    agent_phase_trace: list[str] | None = None,
+    degraded_to: str | None = None,
+    stop_reason: str | None = None,
+    max_steps: int | None = None,
+    session_id_sha256_8: str | None = None,
+    session_id: str | None = None,
+    history_messages: int | None = None,
+    history_chars: int | None = None,
+    session_turns_kept: int | None = None,
+    session_msgs: int | None = None,
+    session_chars: int | None = None,
+    session_summarized: bool | None = None,
+    session_truncated_msgs: int | None = None,
 ) -> dict[str, Any] | None:
     """组装响应 meta；全空则返回 None。"""
     meta: dict[str, Any] = {}
@@ -559,6 +1010,40 @@ def _build_meta(
         meta["context_chunks"] = context_chunks
     if citations_count is not None:
         meta["citations_count"] = citations_count
+    if agent_steps is not None:
+        meta["agent_steps"] = agent_steps
+    if max_steps is not None:
+        meta["max_steps"] = max_steps
+    if tool_calls_count is not None:
+        meta["tool_calls_count"] = tool_calls_count
+    if tools_used is not None:
+        meta["tools_used"] = tools_used
+    if agent_final_phase is not None:
+        meta["agent_final_phase"] = agent_final_phase
+    if agent_phase_trace is not None:
+        meta["agent_phase_trace"] = agent_phase_trace
+    if degraded_to is not None:
+        meta["degraded_to"] = degraded_to
+    if stop_reason is not None:
+        meta["stop_reason"] = stop_reason
+    if session_id is not None:
+        meta["session_id"] = session_id
+    if session_id_sha256_8 is not None:
+        meta["session_id_sha256_8"] = session_id_sha256_8
+    if history_messages is not None:
+        meta["history_messages"] = history_messages
+    if history_chars is not None:
+        meta["history_chars"] = history_chars
+    if session_turns_kept is not None:
+        meta["session_turns_kept"] = session_turns_kept
+    if session_msgs is not None:
+        meta["session_msgs"] = session_msgs
+    if session_chars is not None:
+        meta["session_chars"] = session_chars
+    if session_summarized is not None:
+        meta["session_summarized"] = session_summarized
+    if session_truncated_msgs is not None:
+        meta["session_truncated_msgs"] = session_truncated_msgs
     return meta or None
 
 

@@ -106,6 +106,59 @@ def test_ask_writes_one_jsonl_line(tmp_path, monkeypatch):
     assert row["mode"] == "llm"
     assert row["context_chunks"] == 0
     assert row["citations_count"] == 0
+    assert "session_id" not in row
+    assert "history_messages" not in row
     assert "query" not in row
     assert "answer" not in row
     assert "不写进jsonl的原文" not in lines[0]
+
+
+def test_ask_session_writes_history_metrics(tmp_path, monkeypatch):
+    metrics_path = tmp_path / "requests.jsonl"
+    monkeypatch.setenv("REQUESTS_JSONL_PATH", str(metrics_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    from app.core.config import get_settings
+    from app.services.session_store import clear_all_sessions
+
+    get_settings.cache_clear()
+    clear_all_sessions()
+    app = create_app()
+    mock_client = MagicMock()
+    mock_client.chat.side_effect = [
+        LLMResult(answer="收到约束", model="fake", finish_reason="stop", latency_ms=10),
+        LLMResult(answer="只讨论推送", model="fake", finish_reason="stop", latency_ms=12),
+    ]
+
+    with TestClient(app) as client:
+        client.app.state.llm_client = mock_client
+        r1 = client.post(
+            "/ask",
+            json={
+                "query": "只讨论 Android 推送",
+                "session_id": "s-metrics-1",
+                "mode": "llm",
+            },
+        )
+        r2 = client.post(
+            "/ask",
+            json={
+                "query": "我叫什么？",
+                "session_id": "s-metrics-1",
+                "mode": "llm",
+            },
+        )
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+
+    lines = [
+        json.loads(line)
+        for line in metrics_path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(lines) == 2
+    assert lines[0]["session_id"] == "s-metrics-1"
+    assert lines[0]["history_messages"] == 0
+    assert lines[0]["history_chars"] == 0
+    assert lines[1]["session_id"] == "s-metrics-1"
+    assert lines[1]["history_messages"] == 2
+    assert lines[1]["history_chars"] > 0
+    clear_all_sessions()

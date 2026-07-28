@@ -53,3 +53,33 @@ def test_summarize_new_schema_with_tokens():
     }
     assert summary["avg_total_tokens"] == 15.0
     assert summary["max_total_tokens"] == 20
+
+
+def test_summarize_session_latency_and_history():
+    mod = _load_stats_module()
+    records = [
+        {
+            "ok": True,
+            "latency_ms_total": 100,
+            "session_id": "s1",
+            "history_messages": 0,
+            "history_chars": 0,
+        },
+        {
+            "ok": True,
+            "latency_ms_total": 120,
+            "session_id": "s1",
+            "history_messages": 2,
+            "history_chars": 80,
+        },
+        {
+            "ok": True,
+            "latency_ms_total": 90,
+        },
+    ]
+    summary = mod.summarize(records)
+    assert summary["with_session"]["count"] == 2
+    assert summary["without_session"]["count"] == 1
+    assert summary["with_session"]["p95_latency_ms"] is not None
+    assert summary["history_messages"]["max"] == 2
+    assert summary["history_chars"]["max"] == 80

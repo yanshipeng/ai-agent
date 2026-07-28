@@ -1,0 +1,32 @@
+{"id": "a_tool_01", "query": "Android ANR 怎么排查？请给出可执行步骤。", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_02", "query": "主线程卡顿如何用 traces.txt 分析？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_03", "query": "Input dispatching timed out 一般怎么查？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_04", "query": "ANR 日志里 CPU 负载字段怎么解读？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_05", "query": "如何用 adb 导出 /data/anr/traces.txt？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_06", "query": "BroadcastReceiver 超时导致 ANR 怎么定位？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_07", "query": "Service 里做耗时操作引发 ANR 如何规避？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_08", "query": "ContentProvider onCreate 卡住导致 ANR 怎么查？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_09", "query": "ANR 与卡顿的区别是什么？排查侧重点有何不同？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_10", "query": "如何从 traces 判断是锁等待还是主线程 IO？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_11", "query": "StrictMode 对发现主线程违规有什么帮助？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_12", "query": "Watchdog 相关 ANR 日志如何解读？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_13", "query": "界面点击无响应但进程还在，如何确认是否 ANR？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_14", "query": "ANR 时如何抓取 systrace / Perfetto 辅助分析？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_15", "query": "主线程同步 Binder 调用导致 ANR 怎么排查？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_16", "query": "Handler 消息堆积造成卡顿/ANR 如何发现？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_17", "query": "SharedPreferences apply/commit 与 ANR 的关系？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_18", "query": "线上 ANR 率升高时，客户端侧优先看哪些指标和日志？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_19", "query": "如何区分 Input ANR 与 Broadcast ANR？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_20", "query": "ANR traces 里 \"waiting to lock\" 意味着什么？下一步怎么查？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_21", "query": "冷启动阶段发生 ANR，启动链路应重点检查什么？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_tool_22", "query": "如何用 bugreport 辅助 ANR 根因定位？", "tag": "tool", "category": "A", "expect_tool_calls": true, "expect_clarify": false}
+{"id": "a_clarify_01", "query": "App 又卡了，你帮我看看。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_02", "query": "帮我看下这个 log。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_03", "query": "还是不行，再弄一下。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_04", "query": "昨天那个 ANR 怎么修？", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_05", "query": "有点卡顿。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_06", "query": "按刚才说的继续处理。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_07", "query": "这个手机有问题。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_08", "query": "ANR 了，怎么办？", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_09", "query": "为什么会这样？", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}
+{"id": "a_clarify_10", "query": "帮我排查一下。", "tag": "clarify", "category": "A", "expect_tool_calls": false, "expect_clarify": true}

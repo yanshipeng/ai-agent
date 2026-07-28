@@ -105,8 +105,22 @@ class LLMError(Exception):
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """模型发起的单次 tool call（OpenAI / DeepSeek function calling 兼容）。
+
+    id         —— 本轮唯一；Observe 写 role=tool 时必须回传同一 tool_call_id
+    name       —— 工具名，如 kb_search
+    arguments  —— JSON **字符串**（保持原样；由 tools.execute_tool 解析）
+    """
+
+    id: str
+    name: str
+    arguments: str  # JSON 字符串（原样回传 / 交给 Runner 解析）
+
+
+@dataclass(frozen=True)
 class LLMResult:
-    """chat() / ask() 的统一返回结构。"""
+    """chat() 的统一返回：最终文本回答（不含 tool_calls 中间态）。"""
 
     answer: str
     model: str
@@ -116,6 +130,30 @@ class LLMResult:
     fallback: bool = False  # True 表示已走兜底文案
     error_code: str | None = None  # 兜底或失败时的内部错误码
     retry_count: int = 0  # 实际重试次数（不含首次）
+
+
+@dataclass(frozen=True)
+class LLMTurnResult:
+    """单轮 chat.completions 结果：可能是终答，也可能是 tool_calls。
+
+    Agent Runner 只认这一种结构：
+      has_tool_calls → 进入 Act
+      否则用 content 作为最终回答 → Final
+    """
+
+    content: str | None
+    tool_calls: list[ToolCall]
+    model: str
+    finish_reason: str | None
+    latency_ms: int
+    usage: dict[str, Any] | None = None
+    retry_count: int = 0
+    fallback: bool = False
+    error_code: str | None = None
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
 
 
 def map_llm_error_to_http(error: LLMError) -> tuple[int, str]:
@@ -214,6 +252,45 @@ class LLMClient:
             messages: OpenAI 风格 messages 列表
             request_id: 可选，写入 llm_call_* 日志便于链路追踪
         """
+        turn = self.chat_turn(messages, request_id=request_id, allow_fallback=True)
+        if turn.has_tool_calls:
+            raise LLMError(UPSTREAM_UNKNOWN, "unexpected tool_calls without tools", status_code=502)
+        return LLMResult(
+            answer=(turn.content or "").strip(),
+            model=turn.model,
+            finish_reason=turn.finish_reason,
+            latency_ms=turn.latency_ms,
+            usage=turn.usage,
+            fallback=turn.fallback,
+            error_code=turn.error_code,
+            retry_count=turn.retry_count,
+        )
+
+    def chat_turn(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        request_id: str | None = None,
+        mode: str | None = None,
+        agent_step: int | None = None,
+        allow_fallback: bool = False,
+    ) -> LLMTurnResult:
+        """单轮 chat.completions（可选 tools）—— Agent 的「Plan」相位专用。
+
+        与 chat() 的关系：
+          chat() 只关心最终文本，内部也走 chat_turn，再把 content 提成 answer。
+          Agent 必须用 chat_turn，才能拿到真实 tool_calls。
+
+        行为：
+          - 传入 tools=openai_tools_schema() 时，模型可能返回 tool_calls
+          - 有 tool_calls：content 可为空；Runner 进入 Act
+          - 无 tool_calls：content 为终答文本
+          - 可重试错误默认抛 LLMError；allow_fallback=True 且无 tools 时可兜底文本
+            （带 tools 的轮次不做文本兜底，避免「假装调过工具」）
+
+        日志：llm_call_start/end 会带 tools / tool_calls_count，便于和 agent_step 对齐。
+        """
         if not messages:
             raise LLMError(UPSTREAM_BAD_REQUEST, "messages must not be empty", status_code=400)
 
@@ -221,6 +298,12 @@ class LLMClient:
         last_error: LLMError | None = None
         attempts = self._max_retries + 1
         retry_count = 0
+        tool_names = [
+            str((t.get("function") or {}).get("name") or "")
+            for t in (tools or [])
+            if isinstance(t, dict)
+        ]
+        tool_names = [n for n in tool_names if n]
 
         log_event(
             logger,
@@ -229,12 +312,20 @@ class LLMClient:
             llm_provider=LLM_PROVIDER,
             llm_model=DEFAULT_MODEL,
             message_count=len(messages),
-            hint=f"开始调用 DeepSeek（model={DEFAULT_MODEL}，messages={len(messages)} 条）",
+            mode=mode,
+            agent_step=agent_step,
+            tools=tool_names or None,
+            tools_count=len(tool_names) or None,
+            hint=(
+                f"开始调用 DeepSeek（model={DEFAULT_MODEL}，messages={len(messages)} 条"
+                + (f"，tools={tool_names}" if tool_names else "")
+                + "）"
+            ),
         )
 
         for attempt in range(1, attempts + 1):
             try:
-                result = self._chat_once(messages, started=started)
+                turn = self._chat_once(messages, tools=tools, started=started)
                 retry_count = attempt - 1
                 log_event(
                     logger,
@@ -242,23 +333,31 @@ class LLMClient:
                     request_id=request_id,
                     ok=True,
                     llm_provider=LLM_PROVIDER,
-                    llm_model=result.model,
-                    finish_reason=result.finish_reason,
+                    llm_model=turn.model,
+                    finish_reason=turn.finish_reason,
                     retry_count=retry_count,
-                    latency_ms=result.latency_ms,
+                    latency_ms=turn.latency_ms,
+                    mode=mode,
+                    agent_step=agent_step,
+                    tool_calls_count=len(turn.tool_calls),
+                    tools_called=[tc.name for tc in turn.tool_calls] or None,
                     hint=(
-                        f"大模型成功返回：耗时 {result.latency_ms}ms，"
-                        f"finish_reason={result.finish_reason}，retry={retry_count}"
+                        f"大模型成功返回：耗时 {turn.latency_ms}ms，"
+                        f"finish_reason={turn.finish_reason}，retry={retry_count}"
+                        + (
+                            f"，真实 tool_calls={len(turn.tool_calls)}"
+                            if turn.tool_calls
+                            else ""
+                        )
                     ),
                 )
-                return LLMResult(
-                    answer=result.answer,
-                    model=result.model,
-                    finish_reason=result.finish_reason,
-                    latency_ms=result.latency_ms,
-                    usage=result.usage,
-                    fallback=False,
-                    error_code=None,
+                return LLMTurnResult(
+                    content=turn.content,
+                    tool_calls=turn.tool_calls,
+                    model=turn.model,
+                    finish_reason=turn.finish_reason,
+                    latency_ms=turn.latency_ms,
+                    usage=turn.usage,
                     retry_count=retry_count,
                 )
             except LLMError as exc:
@@ -275,8 +374,7 @@ class LLMClient:
         retry_count = max(0, attempts - 1)
         latency_ms = int((time.perf_counter() - started) * 1000)
 
-        # 可重试错误耗尽 → 兜底（HTTP 层仍可返回 200）
-        if self._enable_fallback and is_retryable(last_error):
+        if allow_fallback and not tools and self._enable_fallback and is_retryable(last_error):
             log_event(
                 logger,
                 EVENT_LLM_CALL_END,
@@ -288,23 +386,24 @@ class LLMClient:
                 retry_count=retry_count,
                 latency_ms=latency_ms,
                 error_code=last_error.code,
+                mode=mode,
                 hint=(
                     f"上游多次失败后走兜底文案：error_code={last_error.code}，"
                     f"retry={retry_count}"
                 ),
             )
-            return LLMResult(
-                answer=FALLBACK_ANSWER,
+            return LLMTurnResult(
+                content=FALLBACK_ANSWER,
+                tool_calls=[],
                 model=FALLBACK_MODEL,
                 finish_reason="fallback",
                 latency_ms=latency_ms,
                 usage=None,
+                retry_count=retry_count,
                 fallback=True,
                 error_code=last_error.code,
-                retry_count=retry_count,
             )
 
-        # 不可重试 / 未开启兜底 → 向上抛出，由路由映射为错误响应
         log_event(
             logger,
             EVENT_LLM_CALL_END,
@@ -315,6 +414,8 @@ class LLMClient:
             retry_count=retry_count,
             latency_ms=latency_ms,
             error_code=last_error.code,
+            mode=mode,
+            agent_step=agent_step,
             hint=f"大模型调用最终失败并将返回错误：error_code={last_error.code}",
         )
         raise last_error
@@ -324,17 +425,22 @@ class LLMClient:
         messages: list[dict[str, Any]],
         *,
         started: float,
-    ) -> LLMResult:
+        tools: list[dict[str, Any]] | None = None,
+    ) -> LLMTurnResult:
         """单次上游调用（不含重试循环）；将 SDK 异常转为 LLMError。"""
         client = self._get_client()
+        kwargs: dict[str, Any] = {
+            "model": DEFAULT_MODEL,
+            "messages": messages,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "stream": DEFAULT_STREAM,
+            "extra_body": dict(DEFAULT_EXTRA_BODY),
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
         try:
-            response = client.chat.completions.create(
-                model=DEFAULT_MODEL,
-                messages=messages,
-                max_tokens=DEFAULT_MAX_TOKENS,
-                stream=DEFAULT_STREAM,
-                extra_body=dict(DEFAULT_EXTRA_BODY),
-            )
+            response = client.chat.completions.create(**kwargs)
         except AuthenticationError as exc:
             raise LLMError(UPSTREAM_UNAUTHORIZED, str(exc), status_code=401) from exc
         except RateLimitError as exc:
@@ -353,7 +459,7 @@ class LLMClient:
             ) from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        return _parse_chat_response(response, latency_ms=latency_ms)
+        return _parse_chat_turn(response, latency_ms=latency_ms)
 
     def ask(
         self,
@@ -385,17 +491,54 @@ def _map_api_status_error(exc: APIStatusError) -> LLMError:
     return LLMError(code, str(exc), status_code=status if status is not None else http_status)
 
 
-def _parse_chat_response(response: Any, *, latency_ms: int) -> LLMResult:
-    """解析 chat.completions 响应；空内容视为 UPSTREAM_UNKNOWN。"""
-    answer = ""
+def _extract_tool_calls(message: Any) -> list[ToolCall]:
+    """从 assistant message 解析 tool_calls（兼容 SDK 对象与 dict）。"""
+    raw = getattr(message, "tool_calls", None)
+    if not raw:
+        return []
+    parsed: list[ToolCall] = []
+    for item in raw:
+        if isinstance(item, dict):
+            fn = item.get("function") or {}
+            call_id = str(item.get("id") or "")
+            name = str(fn.get("name") or "")
+            arguments = fn.get("arguments")
+        else:
+            fn = getattr(item, "function", None)
+            call_id = str(getattr(item, "id", "") or "")
+            name = str(getattr(fn, "name", "") or "") if fn is not None else ""
+            arguments = getattr(fn, "arguments", None) if fn is not None else None
+        if isinstance(arguments, dict):
+            import json
+
+            arguments = json.dumps(arguments, ensure_ascii=False)
+        elif arguments is None:
+            arguments = "{}"
+        else:
+            arguments = str(arguments)
+        if not call_id or not name:
+            continue
+        parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
+    return parsed
+
+
+def _parse_chat_turn(response: Any, *, latency_ms: int) -> LLMTurnResult:
+    """解析一轮响应：允许 content 为空，只要有 tool_calls。"""
+    content: str | None = None
     finish_reason: str | None = None
+    tool_calls: list[ToolCall] = []
     if response.choices:
         choice = response.choices[0]
-        content = getattr(choice.message, "content", None)
-        answer = (content or "").strip()
+        message = getattr(choice, "message", None)
+        raw_content = getattr(message, "content", None) if message is not None else None
+        if isinstance(raw_content, str):
+            content = raw_content
         finish_reason = getattr(choice, "finish_reason", None)
+        if message is not None:
+            tool_calls = _extract_tool_calls(message)
 
-    if not answer:
+    answer = (content or "").strip()
+    if not answer and not tool_calls:
         raise LLMError(UPSTREAM_UNKNOWN, "llm returned empty content", status_code=502)
 
     usage: dict[str, Any] | None = None
@@ -404,8 +547,9 @@ def _parse_chat_response(response: Any, *, latency_ms: int) -> LLMResult:
         usage = usage_obj.model_dump() if hasattr(usage_obj, "model_dump") else dict(usage_obj)
 
     model = getattr(response, "model", None) or DEFAULT_MODEL
-    return LLMResult(
-        answer=answer,
+    return LLMTurnResult(
+        content=answer or None,
+        tool_calls=tool_calls,
         model=model,
         finish_reason=finish_reason,
         latency_ms=latency_ms,

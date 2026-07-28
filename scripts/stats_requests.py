@@ -4,6 +4,8 @@
 输出：
   total / ok / fail / ok_rate
   p50_latency_ms / p95_latency_ms / max_latency_ms
+  （有 session 时）with_session / without_session 的 p95 对比
+  history_messages / history_chars 分位（若有字段）
   retry_rate
   top_error_codes（前 5）
   若有 token：p50/p95/max/avg_total_tokens
@@ -91,6 +93,28 @@ def _error_code(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _has_session(row: dict[str, Any]) -> bool:
+    sid = row.get("session_id")
+    return isinstance(sid, str) and bool(sid.strip())
+
+
+def _int_field(row: dict[str, Any], key: str) -> float | None:
+    value = row.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _latency_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    latencies = sorted(v for v in (_latency_ms(r) for r in rows) if v is not None)
+    return {
+        "count": len(rows),
+        "p50_latency_ms": _round_or_none(percentile(latencies, 50)),
+        "p95_latency_ms": _round_or_none(percentile(latencies, 95)),
+        "max_latency_ms": _round_or_none(latencies[-1] if latencies else None),
+    }
+
+
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(records)
     ok_n = sum(1 for r in records if _is_ok(r))
@@ -130,6 +154,31 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "top_error_codes": top_error_codes,
     }
 
+    with_session = [r for r in records if _has_session(r)]
+    without_session = [r for r in records if not _has_session(r)]
+    if with_session or without_session:
+        summary["with_session"] = _latency_summary(with_session)
+        summary["without_session"] = _latency_summary(without_session)
+
+    hist_msgs = sorted(
+        v for v in (_int_field(r, "history_messages") for r in with_session) if v is not None
+    )
+    hist_chars = sorted(
+        v for v in (_int_field(r, "history_chars") for r in with_session) if v is not None
+    )
+    if hist_msgs:
+        summary["history_messages"] = {
+            "p50": _round_or_none(percentile(hist_msgs, 50)),
+            "p95": _round_or_none(percentile(hist_msgs, 95)),
+            "max": _round_or_none(hist_msgs[-1]),
+        }
+    if hist_chars:
+        summary["history_chars"] = {
+            "p50": _round_or_none(percentile(hist_chars, 50)),
+            "p95": _round_or_none(percentile(hist_chars, 95)),
+            "max": _round_or_none(hist_chars[-1]),
+        }
+
     tokens = sorted(v for v in (_total_tokens(r) for r in records) if v is not None)
     if tokens:
         summary.update(
@@ -161,6 +210,27 @@ def print_human(summary: dict[str, Any], *, path: str) -> None:
     print(f"max_latency_ms    : {summary['max_latency_ms']}")
     print(f"retry_rate        : {summary['retry_rate']:.2%}")
     print(f"top_error_codes   : {summary['top_error_codes']}")
+    if "with_session" in summary:
+        ws = summary["with_session"]
+        ns = summary["without_session"]
+        print(
+            f"with_session      : count={ws['count']} "
+            f"p50={ws['p50_latency_ms']} p95={ws['p95_latency_ms']} max={ws['max_latency_ms']}"
+        )
+        print(
+            f"without_session   : count={ns['count']} "
+            f"p50={ns['p50_latency_ms']} p95={ns['p95_latency_ms']} max={ns['max_latency_ms']}"
+        )
+    if "history_messages" in summary:
+        hm = summary["history_messages"]
+        print(
+            f"history_messages  : p50={hm['p50']} p95={hm['p95']} max={hm['max']}"
+        )
+    if "history_chars" in summary:
+        hc = summary["history_chars"]
+        print(
+            f"history_chars     : p50={hc['p50']} p95={hc['p95']} max={hc['max']}"
+        )
     if "avg_total_tokens" in summary:
         print(f"p50_total_tokens  : {summary['p50_total_tokens']}")
         print(f"p95_total_tokens  : {summary['p95_total_tokens']}")
@@ -176,6 +246,11 @@ def main() -> int:
         help="Path to requests.jsonl (default: ./requests.jsonl)",
     )
     parser.add_argument("--json", action="store_true", help="Print raw JSON summary")
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="只统计指定 session_id 的行（验收多轮延迟）",
+    )
     args = parser.parse_args()
 
     try:
@@ -183,6 +258,13 @@ def main() -> int:
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+
+    if args.session_id:
+        sid = args.session_id.strip()
+        records = [r for r in records if r.get("session_id") == sid]
+        if not records:
+            print(f"no records for session_id={sid}", file=sys.stderr)
+            return 2
 
     summary = summarize(records)
     if args.json:
