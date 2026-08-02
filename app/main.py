@@ -12,11 +12,22 @@
 """
 
 from contextlib import asynccontextmanager
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from app.api import ask_validation_exception_handler, router
+from app.api import ask_validation_exception_handler, build_error_body, router
+from app.api_v1 import router as router_v1
+from app.core.audit_context import clear_audit_fields, set_audit_fields
+from app.core.auth import (
+    AuthError,
+    authenticate_request,
+    is_public_path,
+    set_request_auth,
+)
+from app.services.rate_limit import RateLimitError, check_rate_limit
 from app.core.config import get_settings
 from app.core.logging import (
     EVENT_APP_SHUTDOWN,
@@ -47,7 +58,8 @@ async def lifespan(app: FastAPI):
         rag_top_k=settings.rag_top_k,
         requests_jsonl_path=settings.requests_jsonl_path,
         hint=(
-            "服务已启动。健康检查 GET /health；问答 POST /ask；"
+            "服务已启动。健康检查 GET /health|/v1/health；"
+            "问答 POST /ask|/v1/ask；入库 POST /v1/ingest；评测 POST /v1/eval/run；"
             f"RAG 索引目录={settings.kb_index_dir}；指标文件={settings.requests_jsonl_path}"
         ),
     )
@@ -65,7 +77,55 @@ def create_app() -> FastAPI:
     )
     # 统一把 RequestValidationError 转成 INVALID_ARGUMENT 错误体
     app.add_exception_handler(RequestValidationError, ask_validation_exception_handler)
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        """Day22：API Key 鉴权；审计字段写入 contextvars。"""
+        clear_audit_fields()
+        path = request.url.path
+        if is_public_path(path):
+            return await call_next(request)
+        try:
+            auth = authenticate_request(request)
+        except AuthError as exc:
+            request_id = str(uuid.uuid4())
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=build_error_body(
+                    request_id=request_id,
+                    code=exc.code,
+                    message=exc.message,
+                ),
+            )
+        set_request_auth(request, auth)
+        set_audit_fields(auth.metric_fields())
+        # Day24：鉴权通过后按 tenant / api_key 限流
+        try:
+            check_rate_limit(
+                tenant_id=auth.tenant_id,
+                api_key_id=auth.api_key_id,
+            )
+        except RateLimitError as exc:
+            request_id = str(uuid.uuid4())
+            headers = {}
+            if exc.decision.retry_after_seconds is not None:
+                headers["Retry-After"] = str(int(exc.decision.retry_after_seconds) + 1)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=build_error_body(
+                    request_id=request_id,
+                    code=exc.code,
+                    message=exc.message,
+                ),
+                headers=headers,
+            )
+        try:
+            return await call_next(request)
+        finally:
+            clear_audit_fields()
+
     app.include_router(router)
+    app.include_router(router_v1)  # Day21：/v1/ask|/v1/ingest|/v1/eval/run
     return app
 
 

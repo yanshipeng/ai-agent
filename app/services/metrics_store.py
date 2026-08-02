@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.audit_context import get_audit_fields
 from app.core.config import get_settings
 from app.core.logging import get_logger, query_sha256_8 as hash_query_sha256_8
 
@@ -57,7 +58,11 @@ def append_request_metric(
     - 自动丢弃值为 None 的字段
     - 若调用方未提供 ts，自动补 UTC ISO 时间
     """
+    # Day22：审计字段补齐；record 非 None 优先，避免 build_ask_metric 的 None 冲掉 tenant
     payload = {k: v for k, v in record.items() if v is not None}
+    for key, value in get_audit_fields().items():
+        if value is not None and key not in payload:
+            payload[key] = value
     payload.setdefault("ts", datetime.now(timezone.utc).isoformat())
 
     target = Path(path) if path is not None else _default_path()
@@ -160,6 +165,10 @@ def build_ask_metric(
     budget_compressed: bool | None = None,
     cache_hit: int | None = None,
     cache_miss: int | None = None,
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+    role: str | None = None,
+    api_key_id: str | None = None,
 ) -> dict[str, Any]:
     """构造 /ask 请求结束指标记录（不含 query/answer 原文）。
 
@@ -173,6 +182,7 @@ def build_ask_metric(
     Day18：cache_hit / cache_miss。
     Session 字段：session_id / history_messages / history_chars（条数与字符，不含消息原文）
                + session_id_sha256_8 / 压缩统计。
+    Day22 审计：tenant_id / user_id / role / api_key_id（无 query 原文）。
     """
     resolved_len = query_len
     resolved_hash = query_sha256_8
@@ -232,6 +242,10 @@ def build_ask_metric(
         "session_chars": session_chars,
         "session_summarized": session_summarized,
         "session_truncated_msgs": session_truncated_msgs,
+        "tenant_id": (tenant_id or "").strip() or None,
+        "user_id": (user_id or "").strip() or None,
+        "role": (role or "").strip() or None,
+        "api_key_id": (api_key_id or "").strip() or None,
     }
     record.update(_extract_tokens(usage))
     return record

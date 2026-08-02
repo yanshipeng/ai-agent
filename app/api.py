@@ -1,4 +1,4 @@
-"""HTTP 路由：GET /health、POST /ask。
+"""HTTP 路由：GET /health、POST /ask（兼容）；版本化入口见 app.api_v1。
 
 ==========================================================================
 /ask 在整条产品链路里的位置（三 mode）
@@ -11,6 +11,10 @@
   - 有 session_id → 写回 session_store（llm/rag 只存短 user/assistant）
   - 写结构化日志 + requests.jsonl（含 agent_* / session_id / history_*）
   - mode=agent 另写 traces.jsonl（Day18 逐步 agent_trace）
+  - Day21：meta 统一补齐 Contract v2 核心字段
+    （model/mode/latency/finish_type/tool_calls_count）
+
+版本化：优先使用 POST /v1/ask（逻辑与本模块 ask 相同）。
 
 ==========================================================================
 为什么 mode 同时支持 query (?mode=) 和 body.mode
@@ -35,7 +39,7 @@ Week4 护栏与可观测：
   2) request_start（query_len / query_sha256_8 / session 指纹）
   3) 注入预检（命中则拒答，不调 LLM/工具）
   4) 按 mode 分支（rag 检索 / agent 状态机 / llm 直连）
-  5) 成功：门禁 → session + meta + metrics（+ traces）；失败写 error_code 不崩服务
+  5) 成功：门禁 → session + meta(v2) + metrics（+ traces）；失败写 error_code 不崩服务
 ==========================================================================
 """
 
@@ -113,6 +117,14 @@ from app.services.llm_client import (
     map_llm_error_to_http,
     public_error_message,
 )
+from app.core.audit_context import set_audit_fields
+from app.core.auth import (
+    AuthContext,
+    get_request_auth,
+    resolve_identity,
+    set_request_auth,
+)
+from app.services.api_contract_v2 import apply_meta_contract_v2
 from app.services.metrics_store import (
     append_request_metric,
     append_trace_metric,
@@ -334,6 +346,10 @@ class AskRequest(BaseModel):
         le=20,
         description="RAG 检索条数；默认读 RAG_TOP_K",
     )
+    # Day22：身份透传（header 优先；仍不落 query 原文）
+    tenant_id: str | None = Field(default=None, description="租户 ID（也可 X-Tenant-Id）")
+    user_id: str | None = Field(default=None, description="用户 ID（也可 X-User-Id）")
+    role: str | None = Field(default=None, description="角色 reader|admin（也可 X-Role）")
 
     @field_validator("query")
     @classmethod
@@ -404,6 +420,84 @@ def build_error_body(*, request_id: str, code: str, message: str) -> dict[str, A
     return ErrorBody(request_id=request_id, code=code, message=message).model_dump()
 
 
+def _audit_fields(request: Request, body: AskRequest | None = None) -> dict[str, Any]:
+    """Day22：审计字段（tenant/user/role/api_key_id），永不含 query 原文。"""
+    auth = get_request_auth(request)
+    if body is not None:
+        default_role = auth.role if auth else "reader"
+        tenant, user, role = resolve_identity(
+            request,
+            body_tenant_id=body.tenant_id,
+            body_user_id=body.user_id,
+            body_role=body.role,
+            key_default_role=default_role,
+        )
+        key_id = auth.api_key_id if auth else "anonymous"
+        merged = AuthContext(
+            api_key_id=key_id,
+            tenant_id=tenant,
+            user_id=user,
+            role=role,
+        )
+        set_request_auth(request, merged)
+        set_audit_fields(merged.metric_fields())
+        return merged.metric_fields()
+    if auth is not None:
+        set_audit_fields(auth.metric_fields())
+        return auth.metric_fields()
+    return {}
+
+
+def build_ask_response(
+    *,
+    request_id: str,
+    answer: str,
+    citations: list[dict[str, Any]] | list[Citation],
+    latency_ms: int,
+    model: str,
+    meta: dict[str, Any] | None,
+    mode: str,
+    wall_latency_ms: int | None = None,
+    tool_calls_count: int | None = None,
+) -> AskResponse:
+    """统一成功响应：顶层字段 + Contract v2 meta 核心键。"""
+    citation_models: list[Citation] = []
+    for item in citations:
+        if isinstance(item, Citation):
+            citation_models.append(item)
+        else:
+            citation_models.append(Citation(**item))
+    finish = None
+    if isinstance(meta, dict):
+        finish = meta.get("finish_reason") or meta.get("finish_type")
+    tcc = tool_calls_count
+    if tcc is None and isinstance(meta, dict) and meta.get("tool_calls_count") is not None:
+        tcc = int(meta["tool_calls_count"])
+    if tcc is None:
+        tcc = 0
+    normalized = apply_meta_contract_v2(
+        meta,
+        model=model,
+        mode=mode,
+        latency_ms=int(wall_latency_ms if wall_latency_ms is not None else latency_ms),
+        finish_reason=str(finish) if finish is not None else None,
+        tool_calls_count=tcc,
+    )
+    from app.core.audit_context import get_audit_fields
+
+    for key, value in get_audit_fields().items():
+        if value is not None and key not in normalized:
+            normalized[key] = value
+    return AskResponse(
+        request_id=request_id,
+        answer=answer,
+        citations=citation_models,
+        latency_ms=int(latency_ms),
+        model=model,
+        meta=normalized,
+    )
+
+
 def format_validation_message(exc: RequestValidationError) -> str:
     """将 FastAPI/Pydantic 校验错误转成可读 message（不含 query 原文）。"""
     errors = exc.errors()
@@ -444,11 +538,23 @@ def resolve_ask_mode(
     return ASK_MODE_LLM  # type: ignore[return-value]
 
 
-def resolve_top_k(body_top_k: int | None) -> int:
-    """RAG top_k：请求体优先，否则读配置。"""
+def resolve_top_k(
+    body_top_k: int | None,
+    *,
+    query: str | None = None,
+) -> tuple[int, str]:
+    """RAG top_k：body 优先；否则 Day20 动态 TopK（简单 3 / 复杂 5）。
+
+    返回 (top_k, reason)。
+    """
+    from app.services.cost_routing import resolve_dynamic_top_k
+
     if body_top_k is not None:
-        return body_top_k
-    return int(get_settings().rag_top_k)
+        return int(body_top_k), "body_override"
+    if query is not None:
+        return resolve_dynamic_top_k(query, body_top_k=None)
+    # 无 query 时回落配置默认
+    return int(get_settings().rag_top_k), "config_default"
 
 
 async def ask_validation_exception_handler(
@@ -473,7 +579,8 @@ async def ask_validation_exception_handler(
         error_code=CODE_INVALID_ARGUMENT,
         hint="参数不合法：请检查 query 是否为空、是否超过 2000 字符",
     )
-    if request.url.path.rstrip("/") == "/ask":
+    path_norm = request.url.path.rstrip("/")
+    if path_norm in {"/ask", "/v1/ask"}:
         append_request_metric(
             build_ask_metric(
                 request_id=request_id,
@@ -490,6 +597,7 @@ async def ask_validation_exception_handler(
                 retrieve_ms=None,
                 context_chunks=0,
                 citations_count=0,
+                **_audit_fields(request),
             )
         )
     log_event(
@@ -537,9 +645,28 @@ def ask(
     request_id = str(uuid.uuid4())
     started = time.perf_counter()
     reset_cache_counters()  # Day18：按请求统计 cache_hit / cache_miss
+    audit = _audit_fields(request, body)  # Day22：合并 header/body 身份
     client = get_llm_client(request)
     resolved_mode = resolve_ask_mode(query_mode=mode, body_mode=body.mode)
-    top_k = resolve_top_k(body.top_k) if resolved_mode in {ASK_MODE_RAG, ASK_MODE_AGENT} else None
+    top_k_reason: str | None = None
+    if resolved_mode in {ASK_MODE_RAG, ASK_MODE_AGENT}:
+        top_k, top_k_reason = resolve_top_k(body.top_k, query=body.query)
+    else:
+        top_k = None
+    # Day24：单次请求预算（压 max_tokens / TopK / 强制 flash / 澄清短路）
+    from app.services.request_budget import (
+        apply_force_flash,
+        budget_clarify_answer,
+        plan_request_budget,
+    )
+
+    budget = plan_request_budget(body.query, top_k=top_k, mode=resolved_mode)
+    if budget.top_k is not None:
+        top_k = budget.top_k
+        if top_k_reason and "budget" not in str(top_k_reason):
+            top_k_reason = f"{top_k_reason}+budget"
+        elif not top_k_reason:
+            top_k_reason = "budget_cap"
     q_len = len(body.query)
     q_hash = query_sha256_8(body.query)
     sid_fp = session_id_fingerprint(body.session_id)
@@ -551,6 +678,7 @@ def ask(
         "query_sha256_8": q_hash,
         "mode": resolved_mode,
         "session_id_sha256_8": sid_fp,
+        **{k: v for k, v in audit.items() if v is not None},
     }
 
     if resolved_mode == ASK_MODE_AGENT:
@@ -616,13 +744,58 @@ def ask(
                 session_id_sha256_8=sid_fp,
             )
         )
-        return AskResponse(
+        return build_ask_response(
             request_id=request_id,
             answer=str(pack["answer"]),
             citations=[],
             latency_ms=latency_ms_total,
             model=get_settings().llm_model,
             meta=meta,
+            mode=resolved_mode,
+            wall_latency_ms=latency_ms_total,
+            tool_calls_count=0,
+        )
+
+    # Day24：含糊短问 → 澄清短路（不调 LLM，控成本）
+    if budget.clarify_short:
+        latency_ms_total = int((time.perf_counter() - started) * 1000)
+        meta = _build_meta(
+            finish_reason="budget_clarify",
+            usage=None,
+            mode=resolved_mode,
+            top_k=top_k,
+            context_chunks=0,
+            citations_count=0,
+            session_id_sha256_8=sid_fp,
+        ) or {}
+        meta.update(budget.meta_fields())
+        append_request_metric(
+            build_ask_metric(
+                request_id=request_id,
+                path=request.url.path,
+                ok=True,
+                status_code=200,
+                latency_ms_total=latency_ms_total,
+                finish_reason="budget_clarify",
+                query_len=q_len,
+                query_sha256_8=q_hash,
+                mode=resolved_mode,
+                top_k=top_k,
+                context_chunks=0,
+                citations_count=0,
+                session_id_sha256_8=sid_fp,
+            )
+        )
+        return build_ask_response(
+            request_id=request_id,
+            answer=budget_clarify_answer(),
+            citations=[],
+            latency_ms=latency_ms_total,
+            model=get_settings().llm_model,
+            meta=meta,
+            mode=resolved_mode,
+            wall_latency_ms=latency_ms_total,
+            tool_calls_count=0,
         )
 
     if resolved_mode == ASK_MODE_AGENT:
@@ -652,17 +825,31 @@ def ask(
     context_chunks = 0
     retrieve_stats: dict[str, Any] = {}
     messages: list[dict[str, Any]]
+    route_model: str | None = None
+    route_reason: str | None = None
+    day20_meta: dict[str, Any] = {}
+    day20_meta.update(budget.meta_fields())
+    if top_k_reason:
+        day20_meta["top_k_reason"] = top_k_reason
 
     if resolved_mode == ASK_MODE_RAG:
-        index_dir = get_settings().kb_index_dir
-        resolved_top_k = top_k or resolve_top_k(None)
+        from app.services.cost_routing import resolve_route_model, top1_score
+
+        from app.kb.dataset_registry import resolve_active_index_dir
+
+        index_dir = str(resolve_active_index_dir())
+        resolved_top_k = int(top_k or resolve_top_k(None, query=body.query)[0])
         log_event(
             logger,
             EVENT_RETRIEVE_START,
             **base_fields,
             top_k=resolved_top_k,
+            top_k_reason=top_k_reason,
             index_dir=index_dir,
-            hint=f"开始本地检索：index={index_dir}，准备取 Top{resolved_top_k} 片段",
+            hint=(
+                f"开始本地检索：index={index_dir}，准备取 Top{resolved_top_k} 片段"
+                f"（{top_k_reason or 'n/a'}）"
+            ),
         )
         try:
             rag_pack = run_rag_retrieve(
@@ -721,6 +908,18 @@ def ask(
         context_chunks = rag_pack["context_chunks"]
         top_k = rag_pack["top_k"]
         retrieve_stats = retrieve_stat_fields(rag_pack)
+        merge_stats = rag_pack.get("context_merge") or {}
+        if merge_stats:
+            day20_meta["context_merge"] = merge_stats
+        t1 = top1_score(rag_pack.get("hits"))
+        if t1 is not None:
+            day20_meta["retrieve_top1_score"] = t1
+        route_model, route_reason = resolve_route_model(body.query, top1=t1)
+        route_model, flash_note = apply_force_flash(route_model, force=budget.force_flash)
+        if flash_note:
+            route_reason = f"{route_reason}+{flash_note}"
+        day20_meta["llm_route_model"] = route_model
+        day20_meta["llm_route_reason"] = route_reason
         top_chunk_ids = [c.get("chunk_id") for c in citations[:3]]
         log_event(
             logger,
@@ -731,6 +930,9 @@ def ask(
             context_chunks=context_chunks,
             citations_count=len(citations),
             top_chunk_ids=top_chunk_ids,
+            retrieve_top1_score=t1,
+            llm_route_model=route_model,
+            llm_route_reason=route_reason,
             **retrieve_stats,
             hint=(
                 f"检索完成：候选 {retrieve_stats.get('retrieve_candidates', '?')} → "
@@ -738,14 +940,28 @@ def ask(
                 f"去重后 {retrieve_stats.get('retrieve_after_dedup', '?')} → "
                 f"保留 {retrieve_stats.get('retrieve_kept', context_chunks)}，"
                 f"dedup_dropped={retrieve_stats.get('dedup_dropped', 0)}，"
-                f"耗时 {retrieve_ms}ms；已拼好 Context，下一步调用大模型"
+                f"merge={merge_stats}，top1={t1}，route={route_model}/{route_reason}，"
+                f"耗时 {retrieve_ms}ms；下一步调用大模型"
             ),
         )
     else:
+        from app.services.cost_routing import resolve_route_model
+
         messages = [*history, {"role": "user", "content": body.query}]
+        route_model, route_reason = resolve_route_model(body.query, top1=None)
+        route_model, flash_note = apply_force_flash(route_model, force=budget.force_flash)
+        if flash_note:
+            route_reason = f"{route_reason}+{flash_note}"
+        day20_meta["llm_route_model"] = route_model
+        day20_meta["llm_route_reason"] = route_reason
 
     try:
-        result = client.chat(messages, request_id=request_id)
+        result = client.chat(
+            messages,
+            request_id=request_id,
+            model=route_model,
+            max_tokens=budget.max_tokens,
+        )
     except LLMError as exc:
         http_status, error_code = map_llm_error_to_http(exc)
         latency_ms_total = int((time.perf_counter() - started) * 1000)
@@ -796,15 +1012,10 @@ def ask(
             ),
         )
 
-    persist_plain_turn(
-        body.session_id,
-        history=history,
-        query=body.query,
-        answer=result.answer,
-    )
-
     latency_ms_total = int((time.perf_counter() - started) * 1000)
-    # Day17：引用强约束 + 泄密扫描
+    # Day17：引用强约束 + 泄密扫描；Day20：过长回答整形
+    from app.services.cost_routing import shape_long_answer
+
     safe_answer, citation_meta = enforce_citation_consistency(
         result.answer,
         citations,
@@ -813,6 +1024,15 @@ def ask(
     safe_answer, leak_meta = enforce_no_leakage(safe_answer)
     if leak_meta:
         citations = []
+    safe_answer, answer_shaped = shape_long_answer(safe_answer)
+    if answer_shaped:
+        day20_meta["answer_shaped"] = True
+    persist_plain_turn(
+        body.session_id,
+        history=history,
+        query=body.query,
+        answer=safe_answer,
+    )
     cache_fields = _cache_metric_fields()
     meta = _build_meta(
         finish_reason=result.finish_reason,
@@ -833,7 +1053,10 @@ def ask(
         **citation_meta,
         **{k: v for k, v in leak_meta.items() if k in {"leakage_blocked"}},
     )
-    if meta is not None and leak_meta.get("leakage_hits"):
+    if meta is None:
+        meta = {}
+    meta.update({k: v for k, v in day20_meta.items() if v is not None})
+    if leak_meta.get("leakage_hits"):
         meta["leakage_hits"] = leak_meta["leakage_hits"]
     log_event(
         logger,
@@ -890,13 +1113,16 @@ def ask(
             **cache_fields,
         )
     )
-    return AskResponse(
+    return build_ask_response(
         request_id=request_id,
         answer=safe_answer,
-        citations=[Citation(**c) for c in citations],
+        citations=citations,
         latency_ms=result.latency_ms,
         model=result.model,
         meta=meta,
+        mode=resolved_mode,
+        wall_latency_ms=latency_ms_total,
+        tool_calls_count=0,
     )
 
 
@@ -921,11 +1147,13 @@ def _ask_agent(
         for_agent=True,
     )
     hist_fields = history_metric_fields(body.session_id, history)
+    from app.kb.dataset_registry import resolve_active_index_dir
+
     agent = run_agent_loop(
         body.query,
         client=client,
         request_id=request_id,
-        index_dir=get_settings().kb_index_dir,
+        index_dir=str(resolve_active_index_dir()),
         history_messages=history or None,
     )
     latency_ms_total = int((time.perf_counter() - started) * 1000)
@@ -1138,13 +1366,16 @@ def _ask_agent(
         ok=True,
         status_code=200,
     )
-    return AskResponse(
+    return build_ask_response(
         request_id=request_id,
         answer=safe_answer,
-        citations=[Citation(**c) for c in citations],
+        citations=citations,
         latency_ms=agent.latency_ms,
         model=agent.model,
         meta=meta,
+        mode=ASK_MODE_AGENT,
+        wall_latency_ms=latency_ms_total,
+        tool_calls_count=agent.tool_calls_count,
     )
 
 

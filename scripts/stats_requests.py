@@ -121,6 +121,47 @@ def _latency_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _tenant_id(row: dict[str, Any]) -> str | None:
+    tid = row.get("tenant_id")
+    if isinstance(tid, str) and tid.strip():
+        return tid.strip()
+    return None
+
+
+def _tenant_bucket_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """单租户：调用量 / 错误量 / 延迟 / token（成本代理）。"""
+    total = len(rows)
+    ok_n = sum(1 for r in rows if _is_ok(r))
+    fail_n = total - ok_n
+    latencies = sorted(v for v in (_latency_ms(r) for r in rows) if v is not None)
+    tokens = sorted(v for v in (_total_tokens(r) for r in rows) if v is not None)
+    err = Counter()
+    for row in rows:
+        code = _error_code(row)
+        if code:
+            err[code] += 1
+        elif not _is_ok(row):
+            err["unknown"] += 1
+    out: dict[str, Any] = {
+        "total": total,
+        "ok": ok_n,
+        "fail": fail_n,
+        "ok_rate": round(ok_n / total, 4) if total else 0.0,
+        "p50_latency_ms": _round_or_none(percentile(latencies, 50)),
+        "p95_latency_ms": _round_or_none(percentile(latencies, 95)),
+        "max_latency_ms": _round_or_none(latencies[-1] if latencies else None),
+        "error_count": fail_n,
+        "top_error_codes": [
+            {"error_code": c, "count": n} for c, n in err.most_common(5)
+        ],
+    }
+    if tokens:
+        out["sum_total_tokens"] = int(sum(tokens))
+        out["avg_total_tokens"] = round(sum(tokens) / len(tokens), 2)
+        out["p95_total_tokens"] = _round_or_none(percentile(tokens, 95))
+    return out
+
+
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(records)
     ok_n = sum(1 for r in records if _is_ok(r))
@@ -159,6 +200,16 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "retry_rate": retry_rate,
         "top_error_codes": top_error_codes,
     }
+
+    # Day22：按 tenant 汇总调用量 / 错误 / 延迟 / token
+    by_tenant: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
+        key = _tenant_id(row) or "_none"
+        by_tenant.setdefault(key, []).append(row)
+    if any(k != "_none" for k in by_tenant):
+        summary["by_tenant"] = {
+            tid: _tenant_bucket_summary(rows) for tid, rows in sorted(by_tenant.items())
+        }
 
     with_session = [r for r in records if _has_session(r)]
     without_session = [r for r in records if not _has_session(r)]
@@ -376,6 +427,14 @@ def print_human(summary: dict[str, Any], *, path: str) -> None:
             f"budget_compressed : {ov.get('budget_compressed_n')}  "
             f"cache hit/miss={ov.get('cache_hit_sum')}/{ov.get('cache_miss_sum')}"
         )
+    if "by_tenant" in summary:
+        print("by_tenant:")
+        for tid, bucket in summary["by_tenant"].items():
+            print(
+                f"  {tid}: total={bucket['total']} fail={bucket['fail']} "
+                f"p95_lat={bucket.get('p95_latency_ms')} "
+                f"sum_tokens={bucket.get('sum_total_tokens')}"
+            )
 
 
 def main() -> int:
@@ -395,6 +454,11 @@ def main() -> int:
         "--mode",
         default=None,
         help="只统计指定 mode（如 rag / llm / agent）",
+    )
+    parser.add_argument(
+        "--tenant-id",
+        default=None,
+        help="Day22：只统计指定 tenant_id",
     )
     args = parser.parse_args()
 
@@ -416,6 +480,13 @@ def main() -> int:
         records = [r for r in records if r.get("mode") == mode]
         if not records:
             print(f"no records for mode={mode}", file=sys.stderr)
+            return 2
+
+    if args.tenant_id:
+        tid = args.tenant_id.strip()
+        records = [r for r in records if r.get("tenant_id") == tid]
+        if not records:
+            print(f"no records for tenant_id={tid}", file=sys.stderr)
             return 2
 
     summary = summarize(records)

@@ -78,6 +78,8 @@
 | Day17 | 安全与抗注入 | Prompt 隔离 / 引用门禁 / 工具 HITL |
 | Day18 | 可观测 v2 | Trace + Token Budget + Cache 指标 |
 
+> Day19+ 见 [`week5_学习指南.md`](./week5_学习指南.md)。
+
 ---
 
 ## Day16：检索质量 v2（混合检索 + 去重/过滤）
@@ -334,9 +336,10 @@ Week1  能问答、能观测、能回归
 Week2  有本地知识库 + rag 固定检索增强
 Week3  模型自己调工具查库 + 多轮 + Agent 评测
 Week4  检索更稳 + 安全护栏 + Trace/预算/缓存  ← 本周已完成
+Week5  评测 v2（任务完成率）等见 [`week5_学习指南.md`](./week5_学习指南.md)
 ```
 
-默认分支约定：`week-1` / `week-2` / `week-3` / `week-4` 分周；`main` 保持最全。
+默认分支约定：`week-1` … `week-5` 分周；`main` 保持最全。
 
 ---
 

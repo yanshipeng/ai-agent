@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_model: str = Field(default="deepseek-v4-flash", alias="LLM_MODEL")
+    # Day20：高质量路由目标模型（默认 pro）
+    llm_model_pro: str = Field(default="deepseek-v4-pro", alias="LLM_MODEL_PRO")
     llm_timeout_seconds: float = Field(default=30.0, alias="LLM_TIMEOUT_SECONDS")
     llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
@@ -54,6 +56,11 @@ class Settings(BaseSettings):
     rag_hybrid_weight: float = Field(default=0.6, alias="RAG_HYBRID_WEIGHT")
     # Day16：融合分低于此阈值的候选丢弃
     rag_min_score: float = Field(default=0.05, alias="RAG_MIN_SCORE")
+    # Day20：Top1 低于此分数 → 路由到 pro（主成本策略条件）
+    rag_route_pro_min_score: float = Field(
+        default=0.35,
+        alias="RAG_ROUTE_PRO_MIN_SCORE",
+    )
 
     # Agent / Tools（第三周）
     agent_max_steps: int = Field(default=5, alias="AGENT_MAX_STEPS")
@@ -97,6 +104,39 @@ class Settings(BaseSettings):
         alias="SESSION_SUMMARY_USE_LLM",
     )
     session_ttl_seconds: float = Field(default=3600.0, alias="SESSION_TTL_SECONDS")
+
+    # Day22：最小 API Key 鉴权（开启后除 /health|/docs 外必须带 token）
+    api_auth_enabled: bool = Field(default=False, alias="API_AUTH_ENABLED")
+    # 格式：key1:admin,key2:reader（无 :role 时默认 reader）
+    api_keys: str = Field(default="", alias="API_KEYS")
+
+    # Day23：版本化知识库根目录（versions/ + current.json）
+    kb_versions_dir: str = Field(
+        default="data/stability_kb/versions",
+        alias="KB_VERSIONS_DIR",
+    )
+    kb_docs_path: str = Field(
+        default="data/stability_kb/docs.jsonl",
+        alias="KB_DOCS_PATH",
+    )
+
+    # Day24：限流（按 tenant 或 api_key）；默认关以免拖垮本地 pytest
+    rate_limit_enabled: bool = Field(default=False, alias="RATE_LIMIT_ENABLED")
+    rate_limit_rpm: int = Field(default=60, alias="RATE_LIMIT_RPM")
+    rate_limit_window_seconds: int = Field(default=60, alias="RATE_LIMIT_WINDOW_SECONDS")
+    # Day24：单次请求 completion token 硬顶（控 p95）
+    request_token_budget: int = Field(default=1024, alias="REQUEST_TOKEN_BUDGET")
+    request_budget_top_k_cap: int = Field(default=3, alias="REQUEST_BUDGET_TOP_K_CAP")
+
+    # Day25：反馈 / badcase
+    feedback_jsonl_path: str = Field(
+        default="data/feedback/feedback.jsonl",
+        alias="FEEDBACK_JSONL_PATH",
+    )
+    badcases_pending_path: str = Field(
+        default="data/feedback/badcases_pending.jsonl",
+        alias="BADCASES_PENDING_PATH",
+    )
 
 
 @lru_cache

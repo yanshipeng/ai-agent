@@ -34,6 +34,7 @@ from typing import Any
 from app.core.safety import DOCUMENT_TRUST_BANNER, SECURITY_PROMPT_RULES
 from app.kb.index_store import DEFAULT_INDEX_DIR
 from app.kb.retriever import DEFAULT_TOP_K, retrieve, retrieve_stat_fields
+from app.services.cost_routing import long_answer_system_addon, merge_context_hits
 
 ASK_MODE_LLM = "llm"
 ASK_MODE_RAG = "rag"
@@ -42,7 +43,7 @@ ASK_MODES = (ASK_MODE_LLM, ASK_MODE_RAG)
 # 单条 context 截断，避免 prompt 过长（与 LLM_MAX_TOKENS 配套考虑）
 MAX_CONTEXT_CHARS_PER_CHUNK = 1200
 
-# RAG 系统提示（写死；含 Day17 抗注入；评测短语与澄清句对齐）
+# RAG 系统提示（写死；含 Day17 抗注入 + Day20 长答形态；评测短语与澄清句对齐）
 RAG_SYSTEM_PROMPT = f"""你是「稳定性排障」助手。必须严格遵守以下规则：
 1. 只能基于用户消息里提供的 Context（文档事实）回答，禁止使用 Context 之外的知识编造细节。
 2. 若 Context 不足以回答，必须明确说「根据已有资料无法确定」或提出需要澄清的问题，不要臆测。
@@ -50,6 +51,7 @@ RAG_SYSTEM_PROMPT = f"""你是「稳定性排障」助手。必须严格遵守�
 4. 引用编号必须与 Context 中的 [n] 对应；不要编造不存在的编号。
 5. 没有可用引用时，不得输出确定性结论；只能澄清或给出下一步排查问题。
 6. 回答简洁、可执行；优先给出排查步骤。
+{long_answer_system_addon()}
 
 {SECURITY_PROMPT_RULES}"""
 
@@ -149,15 +151,19 @@ def run_rag_retrieve(
         raise FileNotFoundError(
             f"RAG index not found at {index_dir}. Run: python scripts/build_kb_index.py"
         )
+    # 多取一些再合并去噪，最终仍按 top_k 截断（省 context）
+    fetch_k = max(int(top_k), 1) * 2
     out = retrieve(
         query,
-        top_k=top_k,
+        top_k=fetch_k,
         index_dir=index_dir,
         category=category,
         include_snippet=True,
         include_text=True,
     )
-    hits = list(out["results"])
+    raw_hits = list(out["results"])
+    merged_hits, merge_stats = merge_context_hits(raw_hits)
+    hits = merged_hits[: max(int(top_k), 0)]
     citations = hits_to_citations(hits)
     pack: dict[str, Any] = {
         "retrieve_ms": int(out["retrieve_ms"]),
@@ -166,6 +172,8 @@ def run_rag_retrieve(
         "citations": citations,
         "context_chunks": len(hits),
         "messages": build_rag_messages(query, hits),
+        "context_merge": merge_stats,
+        "retrieve_fetched": len(raw_hits),
     }
     pack.update(retrieve_stat_fields(out))
     return pack

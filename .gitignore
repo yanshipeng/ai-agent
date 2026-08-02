@@ -30,5 +30,7 @@ data/stability_kb/docs_report.json
 data/stability_kb/chunks.jsonl
 data/stability_kb/chunks_report.json
 data/stability_kb/index/
+data/stability_kb/versions/
+data/feedback/
 .DS_Store
 *.log

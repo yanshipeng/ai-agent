@@ -241,19 +241,32 @@ class LLMClient:
             )
         return self._client
 
+    def _default_model(self) -> str:
+        return (self._settings.llm_model or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
     def chat(
         self,
         messages: list[dict[str, Any]],
         *,
         request_id: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         """调用 DeepSeek chat.completions（含重试）；可重试错误耗尽后可走兜底。
 
         Args:
             messages: OpenAI 风格 messages 列表
             request_id: 可选，写入 llm_call_* 日志便于链路追踪
+            model: Day20 可选，按请求覆盖模型（默认 Settings.llm_model）
+            max_tokens: Day24 可选，按请求压 completion 上限
         """
-        turn = self.chat_turn(messages, request_id=request_id, allow_fallback=True)
+        turn = self.chat_turn(
+            messages,
+            request_id=request_id,
+            allow_fallback=True,
+            model=model,
+            max_tokens=max_tokens,
+        )
         if turn.has_tool_calls:
             raise LLMError(UPSTREAM_UNKNOWN, "unexpected tool_calls without tools", status_code=502)
         return LLMResult(
@@ -276,6 +289,8 @@ class LLMClient:
         mode: str | None = None,
         agent_step: int | None = None,
         allow_fallback: bool = False,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMTurnResult:
         """单轮 chat.completions（可选 tools）—— Agent 的「Plan」相位专用。
 
@@ -299,6 +314,7 @@ class LLMClient:
         last_error: LLMError | None = None
         attempts = self._max_retries + 1
         retry_count = 0
+        resolved_model = (model or self._default_model()).strip() or self._default_model()
         tool_names = [
             str((t.get("function") or {}).get("name") or "")
             for t in (tools or [])
@@ -311,14 +327,14 @@ class LLMClient:
             EVENT_LLM_CALL_START,
             request_id=request_id,
             llm_provider=LLM_PROVIDER,
-            llm_model=DEFAULT_MODEL,
+            llm_model=resolved_model,
             message_count=len(messages),
             mode=mode,
             agent_step=agent_step,
             tools=tool_names or None,
             tools_count=len(tool_names) or None,
             hint=(
-                f"开始调用 DeepSeek（model={DEFAULT_MODEL}，messages={len(messages)} 条"
+                f"开始调用 DeepSeek（model={resolved_model}，messages={len(messages)} 条"
                 + (f"，tools={tool_names}" if tool_names else "")
                 + "）"
             ),
@@ -326,7 +342,13 @@ class LLMClient:
 
         for attempt in range(1, attempts + 1):
             try:
-                turn = self._chat_once(messages, tools=tools, started=started)
+                turn = self._chat_once(
+                    messages,
+                    tools=tools,
+                    started=started,
+                    model=resolved_model,
+                    max_tokens=max_tokens,
+                )
                 retry_count = attempt - 1
                 log_event(
                     logger,
@@ -411,7 +433,7 @@ class LLMClient:
             request_id=request_id,
             ok=False,
             llm_provider=LLM_PROVIDER,
-            llm_model=DEFAULT_MODEL,
+            llm_model=resolved_model,
             retry_count=retry_count,
             latency_ms=latency_ms,
             error_code=last_error.code,
@@ -427,13 +449,21 @@ class LLMClient:
         *,
         started: float,
         tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMTurnResult:
         """单次上游调用（不含重试循环）；将 SDK 异常转为 LLMError。"""
         client = self._get_client()
+        resolved_model = (model or self._default_model()).strip() or self._default_model()
+        token_cap = (
+            int(max_tokens)
+            if max_tokens is not None
+            else int(self._settings.llm_max_tokens or DEFAULT_MAX_TOKENS)
+        )
         kwargs: dict[str, Any] = {
-            "model": DEFAULT_MODEL,
+            "model": resolved_model,
             "messages": messages,
-            "max_tokens": int(self._settings.llm_max_tokens or DEFAULT_MAX_TOKENS),
+            "max_tokens": max(1, token_cap),
             "stream": DEFAULT_STREAM,
             "extra_body": dict(DEFAULT_EXTRA_BODY),
         }

@@ -136,9 +136,14 @@ def openai_tools_schema() -> list[dict[str, Any]]:
 
 
 def _index_dir() -> Path:
-    """配置里的 KB_INDEX_DIR；缺省回落到仓库默认路径。"""
-    settings = get_settings()
-    return Path(settings.kb_index_dir or DEFAULT_INDEX_DIR)
+    """Day23：优先 dataset current.json；否则 KB_INDEX_DIR。"""
+    try:
+        from app.kb.dataset_registry import resolve_active_index_dir
+
+        return resolve_active_index_dir()
+    except Exception:  # noqa: BLE001
+        settings = get_settings()
+        return Path(settings.kb_index_dir or DEFAULT_INDEX_DIR)
 
 
 def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
