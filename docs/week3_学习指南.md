@@ -1,10 +1,32 @@
 # 第三周学习指南：Tools + 真实 tool_calls（Agent）
 
-> 面向刚入行同学。记录第三周「定义工具 → DeepSeek tool_calls → Tool Runner 状态机 → 多轮 session → `/ask?mode=agent` → Agent 评测」做了什么、怎么操作、原理是什么、怎么验收。  
-> **状态：第三周内容已完成**（见文末「完成总结」）。  
-> 第一周：[`week1_学习指南.md`](./week1_学习指南.md) · 第二周：[`week2_学习指南.md`](./week2_学习指南.md)  
-> 服务日志怎么读：见 [`日志阅读指南.md`](./日志阅读指南.md)。  
-> 代码会变，以仓库当前实现为准；Agent 依赖第二周建好的本地索引 `data/stability_kb/index/`。
+> 面向刚入行同学。本周主题：**定义工具 → tool_calls → 状态机 → 多轮 session → `/ask?mode=agent` → 评测**。  
+> **仓库状态：本周能力已落地**（文末有完成总结；自学请自行勾选任务）。  
+> 导航：[docs/README.md](./README.md) · [week1](./week1_学习指南.md) · [week2](./week2_学习指南.md) · [日志](./日志阅读指南.md)  
+> **前置**：需要 week2 建好的索引 `data/stability_kb/index/`；没有索引先回 week2 最小路径。
+
+### 为什么要 Agent？（一句话）
+
+`mode=rag` 是「每次都先检索」；`mode=agent` 是「模型自己决定要不要调 `kb_search` / `kb_get_chunk`」。  
+你会练到：工具白名单、超时、超步降级、多轮记忆（进程内，重启会丢）。
+
+### 出事怎么退
+
+| 情况 | 回撤 |
+|------|------|
+| Agent 老失败 / 超时 | 先用 `mode=rag` 确认索引正常；再调大 `AGENT_MAX_TOTAL_TIME_MS` |
+| session 对不上 | 换新 `session_id`，或重启服务（内存会话清空） |
+| 工具参数乱 | 看日志 `TOOL_INVALID_ARGS`；对照 `app/agent/tools.py` |
+
+### 本周任务清单（自学勾选）
+
+- [ ] 索引可用，`mode=rag` 先通  
+- [ ] `/ask?mode=agent` 能打出 tool 相关日志 / meta  
+- [ ] `smoke_agent_tools.py` 通过  
+- [ ] 同 `session_id` 多轮记得上文（`smoke_session_memory.py`）  
+- [ ] （可选）`run_agent_eval.py --limit 5` 看报告  
+
+文末 §11 是更细的验收清单，同样请自行勾选。
 
 ---
 
@@ -205,7 +227,7 @@ client.chat.completions.create(..., tools=..., tool_choice="auto")
 
 ```bash
 # 同 session 5 轮记忆 + 指标 + P95
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
 python scripts/smoke_session_memory.py
 python scripts/stats_requests.py --path ./data/runtime/requests.jsonl --session-id <上一步打印的 session_id>
 ```
@@ -336,9 +358,9 @@ request_start
 用 `request_id` 回放：
 
 ```bash
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
 # 发请求后
-python scripts/trace_request.py <request_id> --log /tmp/app.log
+python scripts/trace_request.py <request_id> --log reports/app.log
 ```
 
 重点 grep：`tool_call_start` —— 出现它才说明**模型真的发起了 tool_calls**（不是服务端静默 retrieve）。
@@ -373,7 +395,7 @@ ls data/stability_kb/index/manifest.json
 ### 单次试用
 
 ```bash
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
 
 curl -s 'http://127.0.0.1:8000/ask?mode=agent' \
   -H 'Content-Type: application/json' \
@@ -385,7 +407,7 @@ curl -s 'http://127.0.0.1:8000/ask?mode=agent' \
 ### 验收冒烟（5 次里 ≥3 次真实 tool_calls）
 
 ```bash
-python scripts/smoke_agent_tools.py --log /tmp/app.log
+python scripts/smoke_agent_tools.py --log reports/app.log
 ```
 
 脚本会：
@@ -399,7 +421,7 @@ python scripts/smoke_agent_tools.py --log /tmp/app.log
 样例：`eval/agent_eval_samples.jsonl`（22 条 `tool` + 10 条 `clarify`）。
 
 ```bash
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
 python scripts/run_agent_eval.py
 # 冒烟只跑前 5 条
 python scripts/run_agent_eval.py --limit 5 --skip-validate
@@ -458,19 +480,19 @@ pytest -q
 
 ## 11. 验收清单（Week 3）
 
-- [x] 至少 2 个工具：`kb_search`、`kb_get_chunk`，schema 可传给 DeepSeek  
-- [x] 任意请求 `agent_steps <= max_steps`  
-- [x] `stop_reason` 可区分：`final_answer` / `clarify` / `degraded_to_rag` / `max_steps` / `timeout` / `upstream_error`  
-- [x] Tool Runner 状态机：Plan → Act → Observe → Final  
-- [x] `max_steps` + `AGENT_ON_MAX_STEPS`（rag / clarify / error）  
-- [x] `max_total_time_ms`：超时兜底文案含 `request_id`  
-- [x] `/ask?mode=agent`；`meta` 含 steps / stop_reason / phase_trace  
-- [x] 冒烟：`smoke_agent_tools.py`（真实 tool_calls）  
-- [x] 工具失败可控：`TOOL_INVALID_ARGS` / `TOOL_TIMEOUT` 等  
-- [x] 多轮 `session_id`：滑窗 / 截断 / 摘要；`smoke_session_memory.py`  
-- [x] `requests.jsonl`：`session_id` / `history_messages` / `history_chars`  
-- [x] Agent 评测：`eval/agent_eval_samples.jsonl` ≥30 + `run_agent_eval.py`  
-- [x] 单测：`test_agent_tools` / `test_session_conversation` / `test_run_agent_eval`  
+- [ ] 至少 2 个工具：`kb_search`、`kb_get_chunk`，schema 可传给 DeepSeek  
+- [ ] 任意请求 `agent_steps <= max_steps`  
+- [ ] `stop_reason` 可区分：`final_answer` / `clarify` / `degraded_to_rag` / `max_steps` / `timeout` / `upstream_error`  
+- [ ] Tool Runner 状态机：Plan → Act → Observe → Final  
+- [ ] `max_steps` + `AGENT_ON_MAX_STEPS`（rag / clarify / error）  
+- [ ] `max_total_time_ms`：超时兜底文案含 `request_id`  
+- [ ] `/ask?mode=agent`；`meta` 含 steps / stop_reason / phase_trace  
+- [ ] 冒烟：`smoke_agent_tools.py`（真实 tool_calls）  
+- [ ] 工具失败可控：`TOOL_INVALID_ARGS` / `TOOL_TIMEOUT` 等  
+- [ ] 多轮 `session_id`：滑窗 / 截断 / 摘要；`smoke_session_memory.py`  
+- [ ] `requests.jsonl`：`session_id` / `history_messages` / `history_chars`  
+- [ ] Agent 评测：`eval/agent_eval_samples.jsonl` ≥30 + `run_agent_eval.py`  
+- [ ] 单测：`test_agent_tools` / `test_session_conversation` / `test_run_agent_eval`  
 
 ---
 
@@ -499,8 +521,8 @@ Week4  工程化可交付（检索质量 v2 / 安全 / 可观测 v2）见 [`week
 
 ```bash
 pytest -q tests/test_agent_tools.py tests/test_session_conversation.py tests/test_run_agent_eval.py
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
-python scripts/smoke_agent_tools.py --log /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
+python scripts/smoke_agent_tools.py --log reports/app.log
 python scripts/smoke_session_memory.py
 python scripts/run_agent_eval.py --limit 5 --skip-validate   # 全量去掉 --limit
 ```

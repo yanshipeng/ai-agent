@@ -21,7 +21,7 @@
 【输出】
   - reports/rag_eval_results_*.jsonl
   - reports/rag_eval_report_*.json
-  - 根目录 rag_eval_report.json（最新一份）
+  - reports/rag_eval_report.json（最新一份）
 """
 
 from __future__ import annotations

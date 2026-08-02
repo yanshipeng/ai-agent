@@ -1,10 +1,9 @@
 # 第一周学习指南：FastAPI + DeepSeek 问答服务
 
-> 面向刚入行同学。记录第一周「起服务 → 调 LLM → 错误处理 → 可观测 → 测试回归」做了什么、怎么操作、验收什么。  
-> 服务日志怎么读：见 [`日志阅读指南.md`](./日志阅读指南.md)。  
-> 第二周 RAG / 知识库：见 [`week2_学习指南.md`](./week2_学习指南.md)。  
-> 第三周 Agent / Tools：见 [`week3_学习指南.md`](./week3_学习指南.md)。  
-> 代码会变，以仓库当前实现为准；本周默认 `/ask` 的 `mode=llm`（直连模型，`citations=[]`）。
+> 面向刚入行同学。本周主题：**起服务 → 调 LLM → 错误处理 → 可观测 → 测试回归**。  
+> 文档导航：[docs/README.md](./README.md) · 日志：[日志阅读指南.md](./日志阅读指南.md)  
+> 下一周：[week2_学习指南.md](./week2_学习指南.md) · [week3_学习指南.md](./week3_学习指南.md)  
+> 代码以仓库当前实现为准；本周默认 `/ask` 的 `mode=llm`（直连模型，`citations=[]`）。
 
 ---
 
@@ -17,7 +16,16 @@
 | Day 4 | 结构化日志 + `requests.jsonl` | 能按 `request_id` 追踪 |
 | Day 5 | 契约测试 + 错误映射测试 + 回归样例 | 一键绿、可每周对比 |
 
-一句话：
+### 为什么先做这些？（思考）
+
+| 做法 | 动机 |
+|------|------|
+| 先 `/health` 再 `/ask` | 先确认进程活着，再查模型/Key 问题 |
+| 统一错误码 + 重试/兜底 | 上游 429/超时很常见，不能直接把原始异常甩给用户 |
+| JSON 日志 + `requests.jsonl` | 以后排查靠 `request_id`，不靠猜 |
+| 契约测试 + 回归样例 | 改代码时不怕「悄悄把接口字段改坏」 |
+
+一句话流程：
 
 ```text
 用户 POST /ask
@@ -25,31 +33,58 @@
   → LLMClient.chat()（DeepSeek）
   → 成功：answer + citations=[] + meta
   → 失败：统一错误码 / 可重试则重试 / 耗尽可兜底
-  → 全程：JSON 日志 + requests.jsonl
+  → 全程：JSON 日志 + data/runtime/requests.jsonl
 ```
+
+### 本周任务清单（自学请勾选）
+
+- [ ] 虚拟环境 + `.env` 配好 Key，服务能起
+- [ ] `/health`、`/ask`（mode=llm）跑通
+- [ ] 会用 `request_id` 在日志里追一条请求
+- [ ] `pytest -q` 相关测试通过（或至少契约/错误映射）
+- [ ] `run_eval.py` 或 `run_day5.sh` 跑出报告到 `reports/`
 
 ---
 
 ## 1. 快速上手（本周最小路径）
+
+**Linux / macOS：**
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # 填入 DEEPSEEK_API_KEY
+# 学习阶段建议保持：
+# API_AUTH_ENABLED=false
+# RATE_LIMIT_ENABLED=false
 
 ./scripts/start_server.sh
+```
+
+**Windows PowerShell：**
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# 编辑 .env 填入 DEEPSEEK_API_KEY；鉴权/限流保持 false
+python -m app.main
+# 或：uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 | 地址 | 说明 |
 |------|------|
 | http://127.0.0.1:8000/health | 探活 |
-| http://127.0.0.1:8000/docs | Swagger |
+| http://127.0.0.1:8000/docs | Swagger（推荐新手在这里点试） |
 | http://127.0.0.1:8000/ask | 问答（默认 mode=llm） |
 
 改端口：`PORT=8001 ./scripts/start_server.sh`。停止：`Ctrl+C`。
 
-> **注意**：`pydantic-settings` 默认「环境变量 > `.env`」。若 shell 里已 `export DEEPSEEK_API_KEY`，会盖住 `.env`。`start_server.sh` 会强制以 `.env` 为准。
+> **注意**：  
+> 1) `pydantic-settings` 默认「环境变量 > `.env`」。若 shell 里已 `export DEEPSEEK_API_KEY`，会盖住 `.env`。  
+> 2) 若 `/ask` 一律 **401**：多半开了鉴权。学习阶段设 `API_AUTH_ENABLED=false`，或请求头带 `X-Api-Key`（见 week5）。
 
 手动启动等价：
 
@@ -111,7 +146,7 @@ reports/eval_run_report.json  # 最近一次回归汇总（本地生成）
 | `LLM_BASE_URL` | 否 | `https://api.deepseek.com` | API Base URL |
 | `LLM_MODEL` | 否 | `deepseek-v4-flash` | 模型名 |
 | `LLM_TIMEOUT_SECONDS` | 否 | `30` | 超时（秒） |
-| `LLM_MAX_TOKENS` | 否 | `512` | 最大生成 token |
+| `LLM_MAX_TOKENS` | 否 | `2048` | 最大生成 token |
 | `LLM_TEMPERATURE` | 否 | `0.2` | 温度 |
 | `LLM_THINKING` | 否 | `disabled` | `disabled` / `enabled` |
 | `REQUESTS_JSONL_PATH` | 否 | `./data/runtime/requests.jsonl` | 请求指标路径 |
@@ -229,8 +264,8 @@ validate_failed → request_error
 **不记录** query 原文、API key。新手读日志请看 [`日志阅读指南.md`](./日志阅读指南.md)。
 
 ```bash
-./scripts/start_server.sh 2>&1 | tee /tmp/app.log
-python scripts/trace_request.py <request_id> --log /tmp/app.log
+./scripts/start_server.sh 2>&1 | tee reports/app.log
+python scripts/trace_request.py <request_id> --log reports/app.log
 ```
 
 ### requests.jsonl（每请求 1 行）
@@ -320,21 +355,53 @@ python scripts/run_eval.py \
 
 ---
 
-## 8. 常用命令速查
+## 8. 对照代码读哪里
+
+建议顺序（先主线后细节）：
+
+1. `app/main.py` — 应用怎么创建  
+2. `app/api.py` — `/health`、`/ask`  
+3. `app/services/llm_client.py` — 重试 / 错误映射 / 兜底  
+4. `app/core/logging.py` + `app/services/metrics_store.py` — 日志与指标  
+5. `tests/test_contract.py`、`tests/test_error_mapping.py` — 接口不能乱改的约定  
+
+---
+
+## 9. 常见坑与回撤
+
+| 现象 | 常见原因 | 怎么退 / 怎么修 |
+|------|----------|-----------------|
+| `/ask` 全是 401 | `.env` 开了 `API_AUTH_ENABLED` | 学习阶段改 `false`，或加 `X-Api-Key` |
+| Key 明明写了 `.env` 却无效 | shell 里旧的 `export DEEPSEEK_API_KEY` 盖住了 | `start_server.sh` 启动，或先 `Remove-Item Env:DEEPSEEK_API_KEY`（PS） |
+| 服务起不来 / 端口占用 | 旧进程未停 | 换 `PORT=8001`，或结束占用 8000 的进程 |
+| 找不到 `requests.jsonl` | 还在根目录找 | 看 `data/runtime/requests.jsonl` |
+| `run_day5.sh` 太慢或卡评测 | 想先只看测试 | 看脚本是否支持跳过评测；或先单独 `pytest -q` |
+| 改坏了不知道回哪 | 本地乱改 | `git checkout -- <文件>` 恢复未提交改动；已提交用 `git log` / `git show` 对照 |
+
+日志落盘建议（Windows 也通用）：
+
+```bash
+./scripts/start_server.sh 2>&1 | tee reports/app.log
+python scripts/trace_request.py <request_id> --log reports/app.log
+```
+
+---
+
+## 10. 常用命令速查
 
 ```bash
 ./scripts/start_server.sh
 ./scripts/run_day5.sh
 python scripts/smoke_llm_client.py
 python scripts/stats_requests.py --path ./data/runtime/requests.jsonl
-python scripts/trace_request.py <request_id> --log /tmp/app.log
+python scripts/trace_request.py <request_id> --log reports/app.log
 python scripts/run_eval.py --samples ./eval/eval_samples.jsonl
 pytest -q
 ```
 
 ---
 
-## 9. 验收清单（Week 1）
+## 11. 验收清单（Week 1）
 
 - [ ] `/health` 返回 `status` + `version`
 - [ ] `/ask` 成功有 `request_id` / `answer` / `citations`（array）/ `latency_ms` / `model`
@@ -342,5 +409,5 @@ pytest -q
 - [ ] 上游错误映射到 `UPSTREAM_*`，策略统一
 - [ ] 可重试错误会重试；耗尽可走兜底（200 + `model=fallback`）
 - [ ] 日志可按 `request_id` 串起事件链；不落 query/key
-- [ ] `requests.jsonl` 有每请求一行；`stats_requests.py` 能汇总
+- [ ] `data/runtime/requests.jsonl` 有每请求一行；`stats_requests.py` 能汇总
 - [ ] `./scripts/run_day5.sh` 契约 + 映射 + 回归能跑通

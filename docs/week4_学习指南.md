@@ -1,10 +1,28 @@
 # 第四周学习指南：工程化可交付（检索质量 / 安全 / 可观测）
 
-> 面向刚入行同学。前三周已有：LLM 服务壳 → RAG v1 → Agent v1。  
-> 第四周目标：从「能跑」升级为「工程化可交付」——检索更稳、上线更安全、排障可回放。  
-> **状态：第四周 Day16–18 已完成**（见文末「完成总结」）。  
-> 第一～三周：[`week1_学习指南.md`](./week1_学习指南.md) · [`week2_学习指南.md`](./week2_学习指南.md) · [`week3_学习指南.md`](./week3_学习指南.md)  
-> 服务日志：[`日志阅读指南.md`](./日志阅读指南.md)。
+> 面向刚入行同学。前三周：LLM 服务壳 → RAG → Agent。  
+> 本周目标：从「能跑」升级为「更稳、更安全、可回放」——Day16 混合检索 / Day17 安全 / Day18 可观测。  
+> **仓库状态：Day16–18 已落地**（自学请自行勾选任务）。  
+> 导航：[docs/README.md](./README.md) · [week1](./week1_学习指南.md) · [week2](./week2_学习指南.md) · [week3](./week3_学习指南.md) · [日志](./日志阅读指南.md)
+
+### 为什么要这一周？
+
+| Day | 解决的痛点 |
+|-----|------------|
+| 16 | 只靠向量容易漏关键词命中 → 加上 BM25 混排 |
+| 17 | 提示注入 / 乱引用 / 泄密 → 上线前先挡一层 |
+| 18 | Agent 黑盒难排障 → `traces.jsonl` + token/cache 指标 |
+
+回撤提示：注入误伤正常问题 → 先看 `safety.py` 规则；trace 找不到 → 看 `data/runtime/traces.jsonl`（不是仓库根目录）。
+
+### 本周任务清单（自学勾选）
+
+- [ ] Day16：hybrid 抽检 / `stats_requests --mode rag` 能看到去重流  
+- [ ] Day17：`run_injection_eval.py --offline` 达标  
+- [ ] Day18：打一枪 agent，看 `data/runtime/traces.jsonl` + `obs_v2`  
+- [ ] 相关 `pytest -q tests/test_hybrid_retrieve.py tests/test_safety.py …` 绿  
+
+文末 §5 是更细验收清单。
 
 ---
 
@@ -245,7 +263,7 @@ curl.exe -s -X POST "http://127.0.0.1:8000/ask?mode=agent" `
 
 python scripts/stats_requests.py --mode agent
 # 期望出现：obs_v2.count / trace_steps / context_tokens / cache hit/miss
-# 另：Get-Content traces.jsonl -Tail 1
+# 另：Get-Content data/runtime/traces.jsonl -Tail 1
 ```
 
 ### meta / jsonl 字段
@@ -318,14 +336,14 @@ python scripts/stats_requests.py --mode agent
 
 ## 5. 验收清单（Week 4）
 
-- [x] Day16：hybrid + 过滤/去重；`retrieve_*` 字段进 jsonl/meta  
-- [x] Day16：抽检脚本 + `stats_requests --mode rag` 去重流  
-- [x] Day17：注入预检 + 引用门禁 + 泄密扫描  
-- [x] Day17：`TOOL_NEEDS_APPROVAL`；注入评测 refusal≥90%、leakage=0  
-- [x] Day18：`agent_trace` + `traces.jsonl`  
-- [x] Day18：token 预算压缩/澄清；`cache_hit`/`cache_miss`  
-- [x] Day18：`stats_requests --mode agent` 输出 `obs_v2`  
-- [x] 单测：`test_hybrid_retrieve` / `test_safety` / `test_injection_eval` / `test_observability_day18`  
+- [ ] Day16：hybrid + 过滤/去重；`retrieve_*` 字段进 jsonl/meta  
+- [ ] Day16：抽检脚本 + `stats_requests --mode rag` 去重流  
+- [ ] Day17：注入预检 + 引用门禁 + 泄密扫描  
+- [ ] Day17：`TOOL_NEEDS_APPROVAL`；注入评测 refusal≥90%、leakage=0  
+- [ ] Day18：`agent_trace` + `traces.jsonl`  
+- [ ] Day18：token 预算压缩/澄清；`cache_hit`/`cache_miss`  
+- [ ] Day18：`stats_requests --mode agent` 输出 `obs_v2`  
+- [ ] 单测：`test_hybrid_retrieve` / `test_safety` / `test_injection_eval` / `test_observability_day18`  
 
 ---
 

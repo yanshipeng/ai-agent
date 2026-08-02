@@ -1,10 +1,27 @@
 # 第五周学习指南：交付加深（评测 v2 → 产品化闭环）
 
-> 面向刚入行同学。前四周已有：服务壳 → RAG → Agent → 工程化护栏（检索/安全/可观测）。  
-> 第五周目标：把「好不好」做成**任务完成率**，再收成可对外讲的**产品化形态**（契约 / 权限 / 入库 / 配额 / 反馈回归）。  
-> 第一～四周：[`week1_学习指南.md`](./week1_学习指南.md) · [`week2_学习指南.md`](./week2_学习指南.md) · [`week3_学习指南.md`](./week3_学习指南.md) · [`week4_学习指南.md`](./week4_学习指南.md)
+> 面向刚入行同学。前四周：服务壳 → RAG → Agent → 工程化护栏。  
+> 本周目标：把「好不好」做成**任务完成率**，再收成**产品化形态**（契约 / 权限 / 入库 / 配额 / 反馈回归）。  
+> 导航：[docs/README.md](./README.md) · 前四周：[week1](./week1_学习指南.md) · [week2](./week2_学习指南.md) · [week3](./week3_学习指南.md) · [week4](./week4_学习指南.md)
 
-> **说明（重要）**：本仓库**没有单独的第六周**。原先口头规划里的「Week6 产品化」内容（Day21–25）全部归入本周；代码注释里的 Day21–25 即第五周后半段。
+> **说明（重要）**：本仓库**没有单独的第六周**。原先「Week6 产品化」（Day21–25）全部归入本周。
+
+### 学习前注意
+
+- 练 `/ask` 无 Key 时：保持 `API_AUTH_ENABLED=false`（`.env.example` 学习默认已是 false）。  
+- 练鉴权 / 限流：再打开 `API_AUTH_ENABLED` / `RATE_LIMIT_ENABLED`，并用 `X-Api-Key: dev-admin-key`。  
+- Day23 **回滚**：用 `/v1/ingest` 的 `action=rollback` + `/v1/dataset` 确认版本。  
+- 文中验收清单均为 `[ ]`，请自学时自行勾选。
+
+### 本周任务清单（先勾这 7 项）
+
+- [ ] Day19：`run_eval_v2.py --offline` 出报告  
+- [ ] Day20：`run_day20_demo.py`（需服务）或至少单测绿  
+- [ ] Day21：理解 `/v1/*` 与 Contract v2 meta  
+- [ ] Day22：打开鉴权后无 Key→401，有 Key→可 ask  
+- [ ] Day23：ingest 一次 + rollback 一次，用 `/v1/dataset` 确认  
+- [ ] Day24：限流冒烟或单测理解 `RATE_LIMITED`  
+- [ ] Day25：`run_regression_daily.py --repeat 3` 看趋势  
 
 ---
 
@@ -113,10 +130,10 @@ safety_pass_rate      : 0.xx (n/den)
 
 ### Day19 验收清单
 
-- [x] 样例 ≥80：fact30 / procedure20 / clarify15 / safety15  
-- [x] `run_eval_v2.py` 一键输出三项核心指标  
-- [x] `--offline` 可跑通（CI）  
-- [x] `tests/test_eval_v2.py` 绿  
+- [ ] 样例 ≥80：fact30 / procedure20 / clarify15 / safety15  
+- [ ] `run_eval_v2.py` 一键输出三项核心指标  
+- [ ] `--offline` 可跑通（CI）  
+- [ ] `tests/test_eval_v2.py` 绿  
 - [ ] 在线全量跑一枪并人工扫一眼低分条（建议）
 
 ---
@@ -186,12 +203,12 @@ python scripts/run_day20_demo.py
 
 ### Day20 验收清单
 
-- [x] 动态 TopK 3/5  
-- [x] chunk 合并去噪进 RAG pack  
-- [x] flash/pro 路由 + meta 可观测  
-- [x] 长答形态 / 整形  
-- [x] `run_day20_demo.py`  
-- [x] `tests/test_cost_routing_day20.py`
+- [ ] 动态 TopK 3/5  
+- [ ] chunk 合并去噪进 RAG pack  
+- [ ] flash/pro 路由 + meta 可观测  
+- [ ] 长答形态 / 整形  
+- [ ] `run_day20_demo.py`  
+- [ ] `tests/test_cost_routing_day20.py`
 
 ---
 
@@ -257,11 +274,11 @@ python scripts/run_api_modes_batch.py
 
 ### Day21 验收清单
 
-- [x] `/v1/ask` / `/v1/ingest` / `/v1/eval/run`
-- [x] 三模式 meta 核心字段一致
-- [x] 旧 `/ask` 同步具备 v2 meta（兼容）
-- [x] `run_api_modes_batch.py` 汇总报告
-- [x] 单测 `test_api_contract_v2.py`
+- [ ] `/v1/ask` / `/v1/ingest` / `/v1/eval/run`
+- [ ] 三模式 meta 核心字段一致
+- [ ] 旧 `/ask` 同步具备 v2 meta（兼容）
+- [ ] `run_api_modes_batch.py` 汇总报告
+- [ ] 单测 `test_api_contract_v2.py`
 
 ### 面试怎么讲（30 秒）
 
@@ -301,9 +318,9 @@ python scripts/stats_requests.py --tenant-id acme
 
 ### Day22 验收清单
 
-- [x] 无 token 拒绝（鉴权开启时）
-- [x] tenant/user/role 透传 + jsonl 审计
-- [x] stats 按 tenant 汇总调用/错误/延迟/token
+- [ ] 无 token 拒绝（鉴权开启时）
+- [ ] tenant/user/role 透传 + jsonl 审计
+- [ ] stats 按 tenant 汇总调用/错误/延迟/token
 
 ---
 
@@ -339,10 +356,10 @@ python scripts/run_day23_ingest_demo.py
 
 ### Day23 验收清单
 
-- [x] dataset_version 落盘
-- [x] 增量 unchanged 复用
-- [x] rollback 切换 active
-- [x] Demo 脚本
+- [ ] dataset_version 落盘
+- [ ] 增量 unchanged 复用
+- [ ] rollback 切换 active
+- [ ] Demo 脚本
 
 ---
 
@@ -377,9 +394,9 @@ python scripts/run_rate_limit_smoke.py --n 20
 
 ### Day24 验收清单
 
-- [x] 超限明确错误码 `RATE_LIMITED`
-- [x] token 预算 + TopK/flash/澄清降级
-- [x] 压测冒烟脚本
+- [ ] 超限明确错误码 `RATE_LIMITED`
+- [ ] token 预算 + TopK/flash/澄清降级
+- [ ] 压测冒烟脚本
 
 ---
 
@@ -407,10 +424,10 @@ python scripts/run_regression_daily.py --repeat 3
 
 ### Day25 验收清单
 
-- [x] `/v1/feedback`
-- [x] badcase 沉淀 / promote
-- [x] 每日回归 + 趋势文件
-- [x] 5 条种子 badcase
+- [ ] `/v1/feedback`
+- [ ] badcase 沉淀 / promote
+- [ ] 每日回归 + 趋势文件
+- [ ] 5 条种子 badcase
 
 ---
 
@@ -446,3 +463,13 @@ python scripts/run_day23_ingest_demo.py
 pytest -q tests/test_rate_budget_day24.py tests/test_feedback_day25.py
 python scripts/run_regression_daily.py --repeat 3
 ```
+
+### 整周读代码顺序（复习）
+
+1. `app/services/eval_v2_service.py` + `scripts/run_eval_v2.py`（Day19）  
+2. `app/services/cost_routing.py`（Day20）  
+3. `app/api_v1.py` + `app/services/api_contract_v2.py`（Day21）  
+4. `app/core/auth.py` + `app/main.py` 中间件（Day22）  
+5. `app/kb/ingest_pipeline.py` + `dataset_registry.py`（Day23，含回滚）  
+6. `app/services/rate_limit.py` + `request_budget.py`（Day24）  
+7. `app/services/feedback_store.py` + `scripts/run_regression_daily.py`（Day25）  

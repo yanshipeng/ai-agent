@@ -81,12 +81,11 @@
 - **影响**：重启服务 → 对话没了；开多个 worker → 彼此不共享。
 - **记住**：单机演示够用；**不是 Redis 那种多机共享**。
 
-### 3. 鉴权、限流：代码默认是关的
+### 3. 鉴权、限流：学习默认是关的
 
-- **代码默认**：`API_AUTH_ENABLED=false`、`RATE_LIMIT_ENABLED=false`（方便本地先跑通）。
-- **`.env.example`** 示例写成 `true`，提醒上线要开。
-- **你要演示时**：自己在 `.env` 打开，并配置 `API_KEYS` / `RATE_LIMIT_RPM`。
-- **记住**：**克隆下来能跑 ≠ 已经强制鉴权**。
+- **代码与 `.env.example` 默认**：`API_AUTH_ENABLED=false`、`RATE_LIMIT_ENABLED=false`（方便先跑通）。
+- **你要演示鉴权/限流时**：在 `.env` 改成 `true`，并配置 `API_KEYS` / `RATE_LIMIT_RPM`。
+- **记住**：上线前务必打开鉴权；学习阶段关着更省事。
 
 ### 4. Agent 工具：目前只有查知识库
 
@@ -113,13 +112,16 @@
 
 **按周学习文档（详细操作与踩坑）：**
 
+先看导航 [`docs/README.md`](docs/README.md)（任务节奏、鉴权提示、最小成功路径）。
+
 | 文档 | 内容 |
 |------|------|
+| [`docs/README.md`](docs/README.md) | 新手总入口：读什么、怎么跟做、出事怎么退 |
 | [`docs/week1_学习指南.md`](docs/week1_学习指南.md) | Day1–5：起服务、LLMClient、错误处理、日志、契约与回归 |
 | [`docs/week2_学习指南.md`](docs/week2_学习指南.md) | Day6–10：采集 → 清洗 → 切块 → 索引/检索 → RAG → 评测 |
-| [`docs/week3_学习指南.md`](docs/week3_学习指南.md) | **已完成**：Tools / Agent 状态机 / 多轮 session / 评测 |
-| [`docs/week4_学习指南.md`](docs/week4_学习指南.md) | **已完成**：检索质量 v2 / 安全抗注入 / 可观测 v2 |
-| [`docs/week5_学习指南.md`](docs/week5_学习指南.md) | **已完成**：Day19–25（评测 v2 → 产品化闭环；无单独 Week6） |
+| [`docs/week3_学习指南.md`](docs/week3_学习指南.md) | Tools / Agent 状态机 / 多轮 session / 评测 |
+| [`docs/week4_学习指南.md`](docs/week4_学习指南.md) | 检索质量 v2 / 安全抗注入 / 可观测 v2 |
+| [`docs/week5_学习指南.md`](docs/week5_学习指南.md) | Day19–25（评测 v2 → 产品化闭环；无单独 Week6） |
 | [`docs/日志阅读指南.md`](docs/日志阅读指南.md) | 怎么读服务日志（含 `hint`） |
 
 ---

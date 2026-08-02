@@ -1,12 +1,45 @@
 # 第二周学习指南：稳定性知识库语料处理
 
-> 面向刚入行同学。记录第二周「采集 → 清洗 → 切块 → Embedding/建索引/检索」做了什么、怎么操作、原理是什么、踩过哪些坑。  
-> 第一周基础：见 [`week1_学习指南.md`](./week1_学习指南.md)。  
-> 第三周 Agent / Tools：见 [`week3_学习指南.md`](./week3_学习指南.md)。  
-> 第四周工程化（Day16 混合检索等）：见 [`week4_学习指南.md`](./week4_学习指南.md)。  
-> 服务日志怎么读：见 [`日志阅读指南.md`](./日志阅读指南.md)。  
-> 核心代码注释：各模块文件头写了「做什么 + 为什么这么做」，建议从 `app/kb/`、`app/api.py` 读起。  
-> 代码会变，以仓库当前实现为准；数字以你本机 `data/stability_kb/` 实际文件为准。
+> 面向刚入行同学。本周主题：**采集 → 清洗 → 切块 → Embedding/建索引/检索 → RAG**。  
+> 导航：[docs/README.md](./README.md) · 上周：[week1](./week1_学习指南.md) · 日志：[日志阅读指南.md](./日志阅读指南.md)  
+> 下周：[week3](./week3_学习指南.md) · [week4](./week4_学习指南.md)  
+> 核心代码建议从 `app/kb/`、`app/api.py` 读起。数字以本机 `data/stability_kb/` 为准。
+
+### 本周 30 分钟最小路径（先跑通再深挖）
+
+```bash
+# 若已有语料可跳过 crawl；没有则先采集一小批
+python scripts/build_stability_docs.py --no-refetch
+python scripts/chunk_stability_docs.py
+python scripts/build_kb_index.py
+python scripts/verify_kb_retrieve.py
+python scripts/retrieve_kb.py "Android ANR 怎么排查"
+# 起服务后：
+# curl ... /ask?mode=rag   → 应看到 citations
+```
+
+长文从 §0 往下是完整「为什么 + 踩坑」；**不必一次读完**，按目录跳读即可。卡住先看文末踩坑/备份节。
+
+### 长文目录（深入阅读时用）
+
+| 想解决什么 | 建议跳到 |
+|------------|----------|
+| 为什么分 articles/docs/chunks | §1 为什么要分三层 |
+| 怎么采集/清洗 | Day6 相关节 |
+| 怎么切块 | Day7 相关节 |
+| Embedding / 建索引 / retrieve | Day8 相关节 |
+| `/ask?mode=rag` | Day9 相关节 |
+| 评测与 A/B | Day10 相关节 |
+| 文件被覆盖、验证码、漏斗变少 | 文末「踩坑」 |
+| 索引坏了怎么重来 | 文末备份/重建相关段 |
+
+### 本周任务清单（自学勾选）
+
+- [ ] 跑通最小路径：切块 → 建索引 → retrieve 有结果  
+- [ ] `/ask?mode=rag` 看到非空 `citations`  
+- [ ] 会用 `verify_kb_retrieve.py` / `verify_ask_rag.py`  
+- [ ] 能用大白话讲清 docs vs chunks vs index  
+- [ ] （可选）跑 `run_rag_eval.py` 看 `reports/` 报告  
 
 ---
 
@@ -697,7 +730,7 @@ python scripts/eval_rag_ask.py --seed 42 --code-mode either
   - `--code-mode heuristic`：正文像 `adb` / 堆栈 / 代码关键字也算  
   - `--code-mode either`（默认）：二者任一  
 - 澄清判定短语含：`根据已有资料无法确定`、`信息不足`、`需要澄清`、`请补充` 等。  
-- 报告：`reports/rag_eval_report_*.json` 与根目录 `rag_eval_report.json`。
+- 报告：`reports/rag_eval_report_*.json`，最新一份为 `reports/rag_eval_report.json`。
 
 ### 如何确认「真的用了本地资料」
 
@@ -709,9 +742,9 @@ python scripts/eval_rag_ask.py --seed 42 --code-mode either
 curl -s 'http://127.0.0.1:8000/ask?mode=rag' \
   -H 'Content-Type: application/json' \
   -d '{"query":"Android ANR 怎么排查","top_k":5}' \
-  | tee /tmp/ask_rag.json >/dev/null
+  | tee reports/ask_rag.json >/dev/null
 
-python scripts/verify_ask_rag.py --response /tmp/ask_rag.json
+python scripts/verify_ask_rag.py --response reports/ask_rag.json
 # 或只查指标：
 python scripts/verify_ask_rag.py <request_id>
 ```
@@ -929,8 +962,8 @@ python scripts/build_kb_index.py
 python scripts/retrieve_kb.py "Android ANR 怎么排查" --top-k 5
 python scripts/verify_kb_retrieve.py
 
-# RAG 响应对账（先 curl 存到 /tmp/ask_rag.json）
-python scripts/verify_ask_rag.py --response /tmp/ask_rag.json
+# RAG 响应对账（先 curl 存到 reports/ask_rag.json）
+python scripts/verify_ask_rag.py --response reports/ask_rag.json
 
 # Day10 评测闭环（≥50；调试可加 --limit 5）
 python scripts/run_rag_eval.py
