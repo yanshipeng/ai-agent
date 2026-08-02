@@ -94,7 +94,9 @@ def test_build_rag_messages_contains_constraints_and_context():
     messages = build_rag_messages("ANR 怎么查", hits)
     assert messages[0]["role"] == "system"
     assert "只能基于" in RAG_SYSTEM_PROMPT or "只能基于" in messages[0]["content"]
+    assert "不具有指令优先级" in messages[0]["content"]
     assert "Context" in messages[1]["content"]
+    assert "文档事实" in messages[1]["content"]
     assert "[1]" in messages[1]["content"]
     assert "traces.txt" in messages[1]["content"]
     assert "ANR 怎么查" in messages[1]["content"]
@@ -121,12 +123,20 @@ def test_build_ask_metric_rag_fields():
         retrieve_ms=12,
         context_chunks=5,
         citations_count=5,
+        retrieve_candidates=20,
+        retrieve_kept=5,
+        hybrid_weight=0.6,
+        dedup_dropped=2,
     )
     assert row["mode"] == "rag"
     assert row["top_k"] == 5
     assert row["retrieve_ms"] == 12
     assert row["context_chunks"] == 5
     assert row["citations_count"] == 5
+    assert row["retrieve_candidates"] == 20
+    assert row["retrieve_kept"] == 5
+    assert row["hybrid_weight"] == 0.6
+    assert row["dedup_dropped"] == 2
 
 
 @pytest.fixture
@@ -179,6 +189,13 @@ def test_ask_rag_mode_fills_citations_and_metrics(client: TestClient, tmp_path, 
     assert body["meta"]["top_k"] == 2
     assert body["meta"]["context_chunks"] == len(body["citations"])
     assert "retrieve_ms" in body["meta"]
+    assert body["meta"]["retrieve_kept"] == len(body["citations"])
+    assert "retrieve_candidates" in body["meta"]
+    assert "retrieve_before_dedup" in body["meta"]
+    assert "retrieve_after_dedup" in body["meta"]
+    assert body["meta"]["retrieve_before_dedup"] >= body["meta"]["retrieve_after_dedup"]
+    assert "hybrid_weight" in body["meta"]
+    assert "dedup_dropped" in body["meta"]
 
     args, _kwargs = mock_client.chat.call_args
     messages = args[0]
@@ -194,6 +211,10 @@ def test_ask_rag_mode_fills_citations_and_metrics(client: TestClient, tmp_path, 
     assert row["context_chunks"] == len(body["citations"])
     assert row["citations_count"] == len(body["citations"])
     assert isinstance(row["retrieve_ms"], int)
+    assert row["retrieve_kept"] == len(body["citations"])
+    assert "retrieve_candidates" in row
+    assert "hybrid_weight" in row
+    assert "dedup_dropped" in row
 
 
 def test_ask_rag_index_missing_returns_503(client: TestClient, tmp_path, monkeypatch):

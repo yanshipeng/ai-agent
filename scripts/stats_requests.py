@@ -9,6 +9,12 @@
   retry_rate
   top_error_codes（前 5）
   若有 token：p50/p95/max/avg_total_tokens
+  Day16：retrieve_ms / candidates / before_dedup→after_dedup / kept / dedup_dropped
+  Day18：obs_v2（trace_steps / context_tokens / budget_compressed / cache hit·miss）
+
+用法：
+  python scripts/stats_requests.py --mode rag
+  python scripts/stats_requests.py --mode agent
 """
 
 from __future__ import annotations
@@ -190,7 +196,105 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             }
         )
 
+    retrieve = _retrieve_summary(records)
+    if retrieve:
+        summary["retrieve"] = retrieve
+
+    day18 = _day18_summary(records)
+    if day18:
+        summary["observability_v2"] = day18
+
     return summary
+
+
+def _day18_summary(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Day18：agent_trace 长度、context token、cache hit/miss。"""
+    rows = [
+        r
+        for r in records
+        if r.get("agent_trace") is not None
+        or isinstance(r.get("context_tokens_used"), (int, float))
+        or isinstance(r.get("cache_hit"), (int, float))
+        or isinstance(r.get("cache_miss"), (int, float))
+    ]
+    if not rows:
+        return None
+
+    trace_lens = sorted(
+        len(r["agent_trace"])
+        for r in rows
+        if isinstance(r.get("agent_trace"), list)
+    )
+    ctx = sorted(
+        v for v in (_int_field(r, "context_tokens_used") for r in rows) if v is not None
+    )
+    hits = [_int_field(r, "cache_hit") for r in rows]
+    misses = [_int_field(r, "cache_miss") for r in rows]
+    hit_sum = int(sum(v for v in hits if v is not None))
+    miss_sum = int(sum(v for v in misses if v is not None))
+    compressed_n = sum(1 for r in rows if r.get("budget_compressed") is True)
+
+    out: dict[str, Any] = {"count": len(rows)}
+    if trace_lens:
+        out["agent_trace_steps"] = {
+            "p50": _round_or_none(percentile(trace_lens, 50)),
+            "p95": _round_or_none(percentile(trace_lens, 95)),
+            "max": _round_or_none(trace_lens[-1]),
+        }
+    if ctx:
+        out["context_tokens_used"] = {
+            "p50": _round_or_none(percentile(ctx, 50)),
+            "p95": _round_or_none(percentile(ctx, 95)),
+            "max": _round_or_none(ctx[-1]),
+        }
+    out["budget_compressed_n"] = compressed_n
+    out["cache_hit_sum"] = hit_sum
+    out["cache_miss_sum"] = miss_sum
+    return out
+
+
+def _retrieve_summary(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Day16：检索耗时与去重前后数量变化。"""
+    retrieve_rows = [
+        r
+        for r in records
+        if isinstance(r.get("retrieve_ms"), (int, float))
+        or isinstance(r.get("retrieve_candidates"), (int, float))
+    ]
+    if not retrieve_rows:
+        return None
+
+    def _vals(key: str) -> list[float]:
+        return sorted(
+            v for v in (_int_field(r, key) for r in retrieve_rows) if v is not None
+        )
+
+    ms = _vals("retrieve_ms")
+    candidates = _vals("retrieve_candidates")
+    before = _vals("retrieve_before_dedup")
+    after = _vals("retrieve_after_dedup")
+    kept = _vals("retrieve_kept")
+    dropped = _vals("dedup_dropped")
+
+    out: dict[str, Any] = {"count": len(retrieve_rows)}
+    if ms:
+        out["retrieve_ms"] = {
+            "p50": _round_or_none(percentile(ms, 50)),
+            "p95": _round_or_none(percentile(ms, 95)),
+            "max": _round_or_none(ms[-1]),
+        }
+    if candidates:
+        out["retrieve_candidates_avg"] = round(sum(candidates) / len(candidates), 2)
+    if before:
+        out["retrieve_before_dedup_avg"] = round(sum(before) / len(before), 2)
+    if after:
+        out["retrieve_after_dedup_avg"] = round(sum(after) / len(after), 2)
+    if kept:
+        out["retrieve_kept_avg"] = round(sum(kept) / len(kept), 2)
+    if dropped:
+        out["dedup_dropped_sum"] = int(sum(dropped))
+        out["dedup_dropped_avg"] = round(sum(dropped) / len(dropped), 2)
+    return out
 
 
 def _round_or_none(value: float | None) -> float | None:
@@ -236,6 +340,42 @@ def print_human(summary: dict[str, Any], *, path: str) -> None:
         print(f"p95_total_tokens  : {summary['p95_total_tokens']}")
         print(f"max_total_tokens  : {summary['max_total_tokens']}")
         print(f"avg_total_tokens  : {summary['avg_total_tokens']}")
+    if "retrieve" in summary:
+        rv = summary["retrieve"]
+        print(f"retrieve.count    : {rv.get('count')}")
+        if "retrieve_ms" in rv:
+            rms = rv["retrieve_ms"]
+            print(
+                f"retrieve_ms       : p50={rms.get('p50')} "
+                f"p95={rms.get('p95')} max={rms.get('max')}"
+            )
+        if "retrieve_before_dedup_avg" in rv:
+            print(
+                f"dedup_flow        : candidates_avg={rv.get('retrieve_candidates_avg')} "
+                f"before={rv.get('retrieve_before_dedup_avg')} → "
+                f"after={rv.get('retrieve_after_dedup_avg')} "
+                f"kept_avg={rv.get('retrieve_kept_avg')} "
+                f"dropped_sum={rv.get('dedup_dropped_sum')}"
+            )
+    if "observability_v2" in summary:
+        ov = summary["observability_v2"]
+        print(f"obs_v2.count      : {ov.get('count')}")
+        if "agent_trace_steps" in ov:
+            ts = ov["agent_trace_steps"]
+            print(
+                f"trace_steps       : p50={ts.get('p50')} "
+                f"p95={ts.get('p95')} max={ts.get('max')}"
+            )
+        if "context_tokens_used" in ov:
+            ct = ov["context_tokens_used"]
+            print(
+                f"context_tokens    : p50={ct.get('p50')} "
+                f"p95={ct.get('p95')} max={ct.get('max')}"
+            )
+        print(
+            f"budget_compressed : {ov.get('budget_compressed_n')}  "
+            f"cache hit/miss={ov.get('cache_hit_sum')}/{ov.get('cache_miss_sum')}"
+        )
 
 
 def main() -> int:
@@ -251,6 +391,11 @@ def main() -> int:
         default=None,
         help="只统计指定 session_id 的行（验收多轮延迟）",
     )
+    parser.add_argument(
+        "--mode",
+        default=None,
+        help="只统计指定 mode（如 rag / llm / agent）",
+    )
     args = parser.parse_args()
 
     try:
@@ -264,6 +409,13 @@ def main() -> int:
         records = [r for r in records if r.get("session_id") == sid]
         if not records:
             print(f"no records for session_id={sid}", file=sys.stderr)
+            return 2
+
+    if args.mode:
+        mode = args.mode.strip()
+        records = [r for r in records if r.get("mode") == mode]
+        if not records:
+            print(f"no records for mode={mode}", file=sys.stderr)
             return 2
 
     summary = summarize(records)

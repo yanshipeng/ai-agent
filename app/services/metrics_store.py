@@ -14,6 +14,9 @@
 
 RAG 最小字段：mode / top_k / retrieve_ms / context_chunks / citations_count
   —— Day10 评测与 A/B 对比直接读这些列。
+Day16 检索可观测：retrieve_candidates / before_dedup / after_dedup /
+                 retrieve_kept / hybrid_weight / dedup_dropped
+Day18：agent_trace / token budget / cache_hit|miss；另可写 traces.jsonl
 ==========================================================================
 """
 
@@ -37,6 +40,11 @@ _lock = threading.Lock()
 def _default_path() -> Path:
     """从配置读取 JSONL 路径（REQUESTS_JSONL_PATH）。"""
     return Path(get_settings().requests_jsonl_path)
+
+
+def _default_traces_path() -> Path:
+    """Day18：逐步 trace 落盘路径（TRACES_JSONL_PATH）。"""
+    return Path(get_settings().traces_jsonl_path)
 
 
 def append_request_metric(
@@ -64,6 +72,28 @@ def append_request_metric(
         logger.error(
             "metrics_write_failed",
             extra={"event": "metrics_write_failed", "path": str(target), "error": str(exc)},
+        )
+
+
+def append_trace_metric(
+    record: dict[str, Any],
+    *,
+    path: str | Path | None = None,
+) -> None:
+    """将一条请求的 agent_trace 追加到 traces.jsonl（1 行 = 1 请求）。"""
+    payload = {k: v for k, v in record.items() if v is not None}
+    payload.setdefault("ts", datetime.now(timezone.utc).isoformat())
+    target = Path(path) if path is not None else _default_traces_path()
+    line = json.dumps(payload, ensure_ascii=False, default=str)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with _lock:
+            with target.open("a", encoding="utf-8") as fp:
+                fp.write(line + "\n")
+    except OSError as exc:
+        logger.error(
+            "traces_write_failed",
+            extra={"event": "traces_write_failed", "path": str(target), "error": str(exc)},
         )
 
 
@@ -100,6 +130,12 @@ def build_ask_metric(
     retrieve_ms: int | None = None,
     context_chunks: int | None = None,
     citations_count: int | None = None,
+    retrieve_candidates: int | None = None,
+    retrieve_before_dedup: int | None = None,
+    retrieve_after_dedup: int | None = None,
+    retrieve_kept: int | None = None,
+    hybrid_weight: float | None = None,
+    dedup_dropped: int | None = None,
     agent_steps: int | None = None,
     tool_calls_count: int | None = None,
     tools_used: list[str] | None = None,
@@ -117,13 +153,24 @@ def build_ask_metric(
     session_chars: int | None = None,
     session_summarized: bool | None = None,
     session_truncated_msgs: int | None = None,
+    agent_trace: list[dict[str, Any]] | None = None,
+    max_context_tokens: int | None = None,
+    context_tokens_used: int | None = None,
+    max_output_tokens: int | None = None,
+    budget_compressed: bool | None = None,
+    cache_hit: int | None = None,
+    cache_miss: int | None = None,
 ) -> dict[str, Any]:
     """构造 /ask 请求结束指标记录（不含 query/answer 原文）。
 
     若传入 query，可自动补齐 query_len / query_sha256_8（仍不会把原文写入 record）。
-    RAG 字段：mode / top_k / retrieve_ms / context_chunks / citations_count。
+    RAG 字段：mode / top_k / retrieve_ms / context_chunks / citations_count
+             + retrieve_candidates / before_dedup / after_dedup /
+               retrieve_kept / hybrid_weight / dedup_dropped。
     Agent 字段：agent_steps / max_steps / tool_calls_count / tools_used /
-               agent_final_phase / agent_phase_trace / degraded_to / stop_reason。
+               agent_final_phase / agent_phase_trace / degraded_to / stop_reason
+               + agent_trace / token budget。
+    Day18：cache_hit / cache_miss。
     Session 字段：session_id / history_messages / history_chars（条数与字符，不含消息原文）
                + session_id_sha256_8 / 压缩统计。
     """
@@ -155,6 +202,12 @@ def build_ask_metric(
         "retrieve_ms": retrieve_ms,
         "context_chunks": context_chunks,
         "citations_count": citations_count,
+        "retrieve_candidates": retrieve_candidates,
+        "retrieve_before_dedup": retrieve_before_dedup,
+        "retrieve_after_dedup": retrieve_after_dedup,
+        "retrieve_kept": retrieve_kept,
+        "hybrid_weight": hybrid_weight,
+        "dedup_dropped": dedup_dropped,
         "agent_steps": agent_steps,
         "max_steps": max_steps,
         "tool_calls_count": tool_calls_count,
@@ -163,6 +216,13 @@ def build_ask_metric(
         "agent_phase_trace": agent_phase_trace,
         "degraded_to": degraded_to,
         "stop_reason": stop_reason,
+        "agent_trace": agent_trace,
+        "max_context_tokens": max_context_tokens,
+        "context_tokens_used": context_tokens_used,
+        "max_output_tokens": max_output_tokens,
+        "budget_compressed": budget_compressed,
+        "cache_hit": cache_hit,
+        "cache_miss": cache_miss,
         "session_id": sid,
         "session_id_sha256_8": session_id_sha256_8,
         "history_messages": history_messages,

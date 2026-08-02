@@ -21,6 +21,7 @@ from app.agent.runner import (
 )
 from app.agent.tools import (
     TOOL_INVALID_ARGS,
+    TOOL_NEEDS_APPROVAL,
     TOOL_NOT_FOUND,
     TOOL_TIMEOUT,
     execute_tool,
@@ -66,6 +67,13 @@ def test_execute_tool_unknown_name():
     out = execute_tool("no_such_tool", {"query": "x"})
     assert out["ok"] is False
     assert out["error_code"] == TOOL_NOT_FOUND
+
+
+def test_execute_tool_high_risk_needs_approval():
+    out = execute_tool("db_query", {"sql": "select 1"})
+    assert out["ok"] is False
+    assert out["error_code"] == TOOL_NEEDS_APPROVAL
+    assert out.get("requires_human") is True
 
 
 def test_execute_tool_invalid_json_args():

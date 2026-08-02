@@ -9,6 +9,10 @@
 注意优先级：
   pydantic-settings 默认「进程环境变量 > .env 文件」。
   若 shell 里 export 过旧 Key，会盖住 .env —— 所以 start_server.sh 会用 .env 强制覆盖。
+
+Week4 相关字段：
+  RAG_HYBRID_WEIGHT / RAG_MIN_SCORE —— Day16 混合检索
+  AGENT_MAX_CONTEXT_TOKENS / TRACES_JSONL_PATH —— Day18 Trace 与预算
 ==========================================================================
 """
 
@@ -46,6 +50,10 @@ class Settings(BaseSettings):
         alias="KB_INDEX_DIR",
     )
     rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
+    # Day16：混合检索权重（向量占比）；关键词 = 1 - weight
+    rag_hybrid_weight: float = Field(default=0.6, alias="RAG_HYBRID_WEIGHT")
+    # Day16：融合分低于此阈值的候选丢弃
+    rag_min_score: float = Field(default=0.05, alias="RAG_MIN_SCORE")
 
     # Agent / Tools（第三周）
     agent_max_steps: int = Field(default=5, alias="AGENT_MAX_STEPS")
@@ -61,6 +69,15 @@ class Settings(BaseSettings):
     agent_tool_timeout_seconds: float = Field(
         default=10.0,
         alias="AGENT_TOOL_TIMEOUT_SECONDS",
+    )
+    # Day18：Agent context token 预算（启发式估算）
+    agent_max_context_tokens: int = Field(
+        default=6000,
+        alias="AGENT_MAX_CONTEXT_TOKENS",
+    )
+    traces_jsonl_path: str = Field(
+        default="./traces.jsonl",
+        alias="TRACES_JSONL_PATH",
     )
 
     # 多轮 session 上下文（第三周）：滑窗 / 截断 / 可选摘要

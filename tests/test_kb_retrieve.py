@@ -67,6 +67,10 @@ def test_retrieve_schema_and_score_order(tmp_path: Path):
     assert out["top_k"] == 2
     assert isinstance(out["retrieve_ms"], int) and out["retrieve_ms"] >= 0
     assert 1 <= len(out["results"]) <= 2
+    assert out["retrieve_kept"] == len(out["results"])
+    assert out["retrieve_candidates"] >= out["retrieve_kept"]
+    assert "hybrid_weight" in out
+    assert "dedup_dropped" in out
 
     scores = [r["score"] for r in out["results"]]
     assert scores == sorted(scores, reverse=True)

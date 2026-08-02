@@ -55,12 +55,20 @@ def test_build_ask_metric_includes_rag_fields():
         retrieve_ms=33,
         context_chunks=5,
         citations_count=5,
+        retrieve_candidates=16,
+        retrieve_kept=5,
+        hybrid_weight=0.6,
+        dedup_dropped=1,
     )
     assert row["mode"] == "rag"
     assert row["top_k"] == 5
     assert row["retrieve_ms"] == 33
     assert row["context_chunks"] == 5
     assert row["citations_count"] == 5
+    assert row["retrieve_candidates"] == 16
+    assert row["retrieve_kept"] == 5
+    assert row["hybrid_weight"] == 0.6
+    assert row["dedup_dropped"] == 1
 
 
 def test_ask_writes_one_jsonl_line(tmp_path, monkeypatch):

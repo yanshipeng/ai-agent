@@ -4,12 +4,13 @@
 /ask 在整条产品链路里的位置（三 mode）
 ==========================================================================
   mode=llm   ：拼 [history?] + user → LLMClient.chat
-  mode=rag   ：retrieve → system+history+Context user → chat
+  mode=rag   ：hybrid retrieve → system+history+Context user → chat
   mode=agent ：load history → run_agent_loop（真实 tool_calls 状态机）
 
 成功后：
   - 有 session_id → 写回 session_store（llm/rag 只存短 user/assistant）
   - 写结构化日志 + requests.jsonl（含 agent_* / session_id / history_*）
+  - mode=agent 另写 traces.jsonl（Day18 逐步 agent_trace）
 
 ==========================================================================
 为什么 mode 同时支持 query (?mode=) 和 body.mode
@@ -24,11 +25,17 @@
   load_session_history → compact（截断/滑窗/摘要）→ 注入 messages
   history_metric_fields → jsonl 的 session_id / history_messages / history_chars
 
+Week4 护栏与可观测：
+  Day16：retrieve_* 去重流进 meta / jsonl
+  Day17：detect_prompt_injection 预检拒答；返回前引用门禁 + 泄密扫描
+  Day18：reset_cache_counters；agent_trace / token 预算 / cache_hit|miss 落盘
+
 流程步骤：
-  1) 生成 request_id（UUID）
+  1) 生成 request_id（UUID）；reset_cache_counters
   2) request_start（query_len / query_sha256_8 / session 指纹）
-  3) 按 mode 分支（rag 检索 / agent 状态机 / llm 直连）
-  4) 成功落 session + meta + metrics；失败写 error_code 不崩服务
+  3) 注入预检（命中则拒答，不调 LLM/工具）
+  4) 按 mode 分支（rag 检索 / agent 状态机 / llm 直连）
+  5) 成功：门禁 → session + meta + metrics（+ traces）；失败写 error_code 不崩服务
 ==========================================================================
 """
 
@@ -44,7 +51,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.agent.runner import AGENT_MAX_STEPS, AGENT_NO_ANSWER, AGENT_TIMEOUT, run_agent_loop
+from app.agent.runner import (
+    AGENT_MAX_STEPS,
+    AGENT_NO_ANSWER,
+    AGENT_TIMEOUT,
+    AgentResult,
+    run_agent_loop,
+)
 from app.agent.tools import (
     ASK_MODE_AGENT,
     TOOL_INVALID_ARGS,
@@ -70,6 +83,17 @@ from app.kb.rag import (
     ASK_MODES as RAG_ASK_MODES,
     run_rag_retrieve,
 )
+from app.core.safety import (
+    build_injection_refusal,
+    detect_prompt_injection,
+    enforce_citation_consistency,
+    enforce_no_leakage,
+)
+from app.kb.retriever import (
+    get_cache_counters,
+    reset_cache_counters,
+    retrieve_stat_fields,
+)
 from app.services.conversation import (
     CompactStats,
     compact_messages,
@@ -89,7 +113,11 @@ from app.services.llm_client import (
     map_llm_error_to_http,
     public_error_message,
 )
-from app.services.metrics_store import append_request_metric, build_ask_metric
+from app.services.metrics_store import (
+    append_request_metric,
+    append_trace_metric,
+    build_ask_metric,
+)
 from app.services.session_store import (
     get_session_messages,
     set_session_messages,
@@ -114,6 +142,45 @@ def session_id_fingerprint(session_id: str | None) -> str | None:
     if not sid:
         return None
     return query_sha256_8(sid)
+
+
+def _cache_metric_fields() -> dict[str, int]:
+    """Day18：本请求累计的索引/BM25 缓存命中。"""
+    return get_cache_counters()
+
+
+def _agent_budget_fields(agent: AgentResult) -> dict[str, Any]:
+    """Day18：token 预算 + agent_trace（写入 meta / requests.jsonl）。"""
+    return {
+        "agent_trace": list(agent.agent_trace or []),
+        "max_context_tokens": agent.max_context_tokens,
+        "context_tokens_used": agent.context_tokens_used,
+        "max_output_tokens": agent.max_output_tokens,
+        "budget_compressed": agent.budget_compressed,
+    }
+
+
+def _write_agent_trace_file(
+    *,
+    request_id: str,
+    agent: AgentResult,
+    ok: bool,
+    status_code: int,
+) -> None:
+    """Day18：单独落盘 traces.jsonl（1 请求 1 行，含 steps）。"""
+    append_trace_metric(
+        {
+            "request_id": request_id,
+            "mode": ASK_MODE_AGENT,
+            "ok": ok,
+            "status_code": status_code,
+            "stop_reason": agent.stop_reason,
+            "agent_steps": agent.agent_steps,
+            "max_steps": agent.max_steps,
+            **_agent_budget_fields(agent),
+            **_cache_metric_fields(),
+        }
+    )
 
 
 def load_session_history(
@@ -469,6 +536,7 @@ def ask(
     """问答接口：mode=llm 直连；mode=rag 检索增强；mode=agent 真实 tool_calls 循环。"""
     request_id = str(uuid.uuid4())
     started = time.perf_counter()
+    reset_cache_counters()  # Day18：按请求统计 cache_hit / cache_miss
     client = get_llm_client(request)
     resolved_mode = resolve_ask_mode(query_mode=mode, body_mode=body.mode)
     top_k = resolve_top_k(body.top_k) if resolved_mode in {ASK_MODE_RAG, ASK_MODE_AGENT} else None
@@ -502,6 +570,61 @@ def ask(
         hint=hint,
     )
 
+    # Day17：明显提示注入 / 泄密请求 → 预检拒答（不调 LLM / 工具）
+    injection_hit = detect_prompt_injection(body.query)
+    if injection_hit:
+        pack = build_injection_refusal()
+        latency_ms_total = int((time.perf_counter() - started) * 1000)
+        meta = _build_meta(
+            finish_reason="injection_blocked",
+            usage=None,
+            mode=resolved_mode,
+            top_k=top_k,
+            context_chunks=0,
+            citations_count=0,
+            session_id_sha256_8=sid_fp,
+            citation_guard="injection_precheck",
+        )
+        if meta is None:
+            meta = {}
+        meta["injection_blocked"] = True
+        meta["injection_pattern"] = injection_hit.get("pattern")
+        log_event(
+            logger,
+            EVENT_REQUEST_SUCCESS,
+            **base_fields,
+            status_code=200,
+            ok=True,
+            latency_ms_total=latency_ms_total,
+            injection_blocked=True,
+            hint="注入预检命中：已拒答，未调用检索/大模型/工具",
+        )
+        append_request_metric(
+            build_ask_metric(
+                request_id=request_id,
+                path=request.url.path,
+                ok=True,
+                status_code=200,
+                latency_ms_total=latency_ms_total,
+                finish_reason="injection_blocked",
+                query_len=q_len,
+                query_sha256_8=q_hash,
+                mode=resolved_mode,
+                top_k=top_k,
+                context_chunks=0,
+                citations_count=0,
+                session_id_sha256_8=sid_fp,
+            )
+        )
+        return AskResponse(
+            request_id=request_id,
+            answer=str(pack["answer"]),
+            citations=[],
+            latency_ms=latency_ms_total,
+            model=get_settings().llm_model,
+            meta=meta,
+        )
+
     if resolved_mode == ASK_MODE_AGENT:
         return _ask_agent(
             body=body,
@@ -527,6 +650,7 @@ def ask(
     citations: list[dict[str, Any]] = []
     retrieve_ms: int | None = None
     context_chunks = 0
+    retrieve_stats: dict[str, Any] = {}
     messages: list[dict[str, Any]]
 
     if resolved_mode == ASK_MODE_RAG:
@@ -578,6 +702,7 @@ def ask(
                     citations_count=0,
                     session_id_sha256_8=sid_fp,
                     **hist_fields,
+                    **_cache_metric_fields(),
                 )
             )
             return JSONResponse(
@@ -595,6 +720,7 @@ def ask(
         retrieve_ms = rag_pack["retrieve_ms"]
         context_chunks = rag_pack["context_chunks"]
         top_k = rag_pack["top_k"]
+        retrieve_stats = retrieve_stat_fields(rag_pack)
         top_chunk_ids = [c.get("chunk_id") for c in citations[:3]]
         log_event(
             logger,
@@ -605,9 +731,14 @@ def ask(
             context_chunks=context_chunks,
             citations_count=len(citations),
             top_chunk_ids=top_chunk_ids,
+            **retrieve_stats,
             hint=(
-                f"检索完成：命中 {context_chunks} 条，耗时 {retrieve_ms}ms；"
-                "已拼好 Context（含 [1][2]…），下一步调用大模型"
+                f"检索完成：候选 {retrieve_stats.get('retrieve_candidates', '?')} → "
+                f"去重前 {retrieve_stats.get('retrieve_before_dedup', '?')} → "
+                f"去重后 {retrieve_stats.get('retrieve_after_dedup', '?')} → "
+                f"保留 {retrieve_stats.get('retrieve_kept', context_chunks)}，"
+                f"dedup_dropped={retrieve_stats.get('dedup_dropped', 0)}，"
+                f"耗时 {retrieve_ms}ms；已拼好 Context，下一步调用大模型"
             ),
         )
     else:
@@ -631,6 +762,7 @@ def ask(
             retrieve_ms=retrieve_ms,
             context_chunks=context_chunks,
             citations_count=len(citations),
+            **retrieve_stats,
             hint=f"大模型调用失败：error_code={error_code}，HTTP={http_status}",
         )
         append_request_metric(
@@ -651,6 +783,8 @@ def ask(
                 citations_count=len(citations),
                 session_id_sha256_8=sid_fp,
                 **hist_fields,
+                **retrieve_stats,
+                **_cache_metric_fields(),
             )
         )
         return JSONResponse(
@@ -670,6 +804,16 @@ def ask(
     )
 
     latency_ms_total = int((time.perf_counter() - started) * 1000)
+    # Day17：引用强约束 + 泄密扫描
+    safe_answer, citation_meta = enforce_citation_consistency(
+        result.answer,
+        citations,
+        mode=resolved_mode,
+    )
+    safe_answer, leak_meta = enforce_no_leakage(safe_answer)
+    if leak_meta:
+        citations = []
+    cache_fields = _cache_metric_fields()
     meta = _build_meta(
         finish_reason=result.finish_reason,
         usage=result.usage,
@@ -684,7 +828,13 @@ def ask(
         session_id_sha256_8=sid_fp,
         **hist_fields,
         **session_compact,
+        **retrieve_stats,
+        **cache_fields,
+        **citation_meta,
+        **{k: v for k, v in leak_meta.items() if k in {"leakage_blocked"}},
     )
+    if meta is not None and leak_meta.get("leakage_hits"):
+        meta["leakage_hits"] = leak_meta["leakage_hits"]
     log_event(
         logger,
         EVENT_REQUEST_SUCCESS,
@@ -704,6 +854,9 @@ def ask(
         history_messages=hist_fields.get("history_messages"),
         history_chars=hist_fields.get("history_chars"),
         **session_compact,
+        **retrieve_stats,
+        **cache_fields,
+        **{k: citation_meta[k] for k in ("citation_guard", "citation_invalid_refs") if k in citation_meta},
         hint=(
             f"整单成功：mode={resolved_mode}，总耗时 {latency_ms_total}ms，"
             f"history_messages={hist_fields.get('history_messages', 0)}，"
@@ -733,11 +886,13 @@ def ask(
             session_id_sha256_8=sid_fp,
             **hist_fields,
             **session_compact,
+            **retrieve_stats,
+            **cache_fields,
         )
     )
     return AskResponse(
         request_id=request_id,
-        answer=result.answer,
+        answer=safe_answer,
         citations=[Citation(**c) for c in citations],
         latency_ms=result.latency_ms,
         model=result.model,
@@ -814,6 +969,7 @@ def _ask_agent(
                 f"tool_calls={agent.tool_calls_count}，phase={agent.final_phase}"
             ),
         )
+        day18 = {**_agent_budget_fields(agent), **_cache_metric_fields()}
         append_request_metric(
             build_ask_metric(
                 request_id=request_id,
@@ -845,7 +1001,14 @@ def _ask_agent(
                 session_id_sha256_8=sid_fp,
                 **hist_fields,
                 **session_compact,
+                **day18,
             )
+        )
+        _write_agent_trace_file(
+            request_id=request_id,
+            agent=agent,
+            ok=False,
+            status_code=http_status,
         )
         return JSONResponse(
             status_code=http_status,
@@ -858,6 +1021,15 @@ def _ask_agent(
 
     persist_agent_messages(body.session_id, agent.session_messages)
 
+    safe_answer, citation_meta = enforce_citation_consistency(
+        agent.answer,
+        citations,
+        mode=ASK_MODE_AGENT,
+    )
+    safe_answer, leak_meta = enforce_no_leakage(safe_answer)
+    if leak_meta:
+        citations = []
+    day18 = {**_agent_budget_fields(agent), **_cache_metric_fields()}
     meta = _build_meta(
         finish_reason=agent.finish_reason,
         usage=agent.usage,
@@ -880,7 +1052,12 @@ def _ask_agent(
         session_id_sha256_8=sid_fp,
         **hist_fields,
         **session_compact,
+        **day18,
+        **citation_meta,
+        **{k: v for k, v in leak_meta.items() if k in {"leakage_blocked"}},
     )
+    if meta is not None and leak_meta.get("leakage_hits"):
+        meta["leakage_hits"] = leak_meta["leakage_hits"]
     log_event(
         logger,
         EVENT_REQUEST_SUCCESS,
@@ -905,12 +1082,18 @@ def _ask_agent(
         error_code=agent.error_code if agent.fallback else None,
         history_messages=hist_fields.get("history_messages"),
         history_chars=hist_fields.get("history_chars"),
+        context_tokens_used=agent.context_tokens_used,
+        budget_compressed=agent.budget_compressed,
         **session_compact,
+        **_cache_metric_fields(),
+        **{k: citation_meta[k] for k in ("citation_guard", "citation_invalid_refs") if k in citation_meta},
         hint=(
             f"整单成功：mode=agent，stop_reason={agent.stop_reason}，"
             f"steps={agent.agent_steps}/{agent.max_steps}，"
             f"tool_calls={agent.tool_calls_count}，tools={tools_used}，"
             f"phase_trace={agent.phase_trace}，degraded_to={agent.degraded_to}，"
+            f"trace_steps={len(agent.agent_trace)}，"
+            f"ctx_tokens={agent.context_tokens_used}/{agent.max_context_tokens}，"
             f"history_messages={hist_fields.get('history_messages', 0)}，"
             f"总耗时 {latency_ms_total}ms"
         ),
@@ -946,11 +1129,18 @@ def _ask_agent(
             session_id_sha256_8=sid_fp,
             **hist_fields,
             **session_compact,
+            **day18,
         )
+    )
+    _write_agent_trace_file(
+        request_id=request_id,
+        agent=agent,
+        ok=True,
+        status_code=200,
     )
     return AskResponse(
         request_id=request_id,
-        answer=agent.answer,
+        answer=safe_answer,
         citations=[Citation(**c) for c in citations],
         latency_ms=agent.latency_ms,
         model=agent.model,
@@ -970,6 +1160,12 @@ def _build_meta(
     retrieve_ms: int | None = None,
     context_chunks: int | None = None,
     citations_count: int | None = None,
+    retrieve_candidates: int | None = None,
+    retrieve_before_dedup: int | None = None,
+    retrieve_after_dedup: int | None = None,
+    retrieve_kept: int | None = None,
+    hybrid_weight: float | None = None,
+    dedup_dropped: int | None = None,
     agent_steps: int | None = None,
     tool_calls_count: int | None = None,
     tools_used: list[str] | None = None,
@@ -987,6 +1183,18 @@ def _build_meta(
     session_chars: int | None = None,
     session_summarized: bool | None = None,
     session_truncated_msgs: int | None = None,
+    citation_guard: str | None = None,
+    citation_invalid_refs: list[int] | None = None,
+    citation_missing_for_claims: bool | None = None,
+    citation_refs_used: list[int] | None = None,
+    leakage_blocked: bool | None = None,
+    agent_trace: list[dict[str, Any]] | None = None,
+    max_context_tokens: int | None = None,
+    context_tokens_used: int | None = None,
+    max_output_tokens: int | None = None,
+    budget_compressed: bool | None = None,
+    cache_hit: int | None = None,
+    cache_miss: int | None = None,
 ) -> dict[str, Any] | None:
     """组装响应 meta；全空则返回 None。"""
     meta: dict[str, Any] = {}
@@ -1010,6 +1218,18 @@ def _build_meta(
         meta["context_chunks"] = context_chunks
     if citations_count is not None:
         meta["citations_count"] = citations_count
+    if retrieve_candidates is not None:
+        meta["retrieve_candidates"] = retrieve_candidates
+    if retrieve_before_dedup is not None:
+        meta["retrieve_before_dedup"] = retrieve_before_dedup
+    if retrieve_after_dedup is not None:
+        meta["retrieve_after_dedup"] = retrieve_after_dedup
+    if retrieve_kept is not None:
+        meta["retrieve_kept"] = retrieve_kept
+    if hybrid_weight is not None:
+        meta["hybrid_weight"] = hybrid_weight
+    if dedup_dropped is not None:
+        meta["dedup_dropped"] = dedup_dropped
     if agent_steps is not None:
         meta["agent_steps"] = agent_steps
     if max_steps is not None:
@@ -1044,6 +1264,30 @@ def _build_meta(
         meta["session_summarized"] = session_summarized
     if session_truncated_msgs is not None:
         meta["session_truncated_msgs"] = session_truncated_msgs
+    if citation_guard is not None:
+        meta["citation_guard"] = citation_guard
+    if citation_invalid_refs is not None:
+        meta["citation_invalid_refs"] = citation_invalid_refs
+    if citation_missing_for_claims is not None:
+        meta["citation_missing_for_claims"] = citation_missing_for_claims
+    if citation_refs_used is not None:
+        meta["citation_refs_used"] = citation_refs_used
+    if leakage_blocked is not None:
+        meta["leakage_blocked"] = leakage_blocked
+    if agent_trace is not None:
+        meta["agent_trace"] = agent_trace
+    if max_context_tokens is not None:
+        meta["max_context_tokens"] = max_context_tokens
+    if context_tokens_used is not None:
+        meta["context_tokens_used"] = context_tokens_used
+    if max_output_tokens is not None:
+        meta["max_output_tokens"] = max_output_tokens
+    if budget_compressed is not None:
+        meta["budget_compressed"] = budget_compressed
+    if cache_hit is not None:
+        meta["cache_hit"] = cache_hit
+    if cache_miss is not None:
+        meta["cache_miss"] = cache_miss
     return meta or None
 
 

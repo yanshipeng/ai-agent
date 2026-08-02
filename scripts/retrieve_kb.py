@@ -67,7 +67,13 @@ def main() -> int:
     )
     print(json.dumps(out, ensure_ascii=False, indent=2))
     print(
-        f"\nretrieve_ms={out['retrieve_ms']} hits={len(out['results'])}",
+        f"\nretrieve_ms={out['retrieve_ms']} "
+        f"candidates={out.get('retrieve_candidates')} "
+        f"before_dedup={out.get('retrieve_before_dedup')} → "
+        f"after_dedup={out.get('retrieve_after_dedup')} "
+        f"kept={out.get('retrieve_kept', len(out['results']))} "
+        f"dedup_dropped={out.get('dedup_dropped')} "
+        f"hybrid_weight={out.get('hybrid_weight')}",
         file=sys.stderr,
     )
     return 0

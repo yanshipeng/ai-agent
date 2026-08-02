@@ -29,7 +29,9 @@ from app.agent.runner import (
 )
 from app.agent.tools import (
     ASK_MODE_AGENT,
+    HIGH_RISK_TOOLS,
     TOOL_INVALID_ARGS,
+    TOOL_NEEDS_APPROVAL,
     TOOL_NOT_FOUND,
     TOOL_TIMEOUT,
     TOOL_SPECS,
@@ -41,6 +43,7 @@ __all__ = [
     "ASK_MODE_AGENT",
     "AgentPhase",
     "AgentResult",
+    "HIGH_RISK_TOOLS",
     "STOP_CLARIFY",
     "STOP_DEGRADED_TO_RAG",
     "STOP_FINAL_ANSWER",
@@ -49,6 +52,7 @@ __all__ = [
     "STOP_TIMEOUT",
     "STOP_UPSTREAM_ERROR",
     "TOOL_INVALID_ARGS",
+    "TOOL_NEEDS_APPROVAL",
     "TOOL_NOT_FOUND",
     "TOOL_TIMEOUT",
     "TOOL_SPECS",

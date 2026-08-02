@@ -13,7 +13,10 @@
 流水线：
   articles → cleaner → docs → chunker → chunks
            → embedder + index_store → index/
-           → retriever / rag → /ask?mode=rag
+           → retriever（hybrid+去重）/ rag → /ask?mode=rag
+           → agent.tools 复用同一 retrieve / get_chunk
+
+Week4：bm25.py + retriever 去重统计；cache_hit/miss 计数供 api 落盘。
 ==========================================================================
 """
 
@@ -47,7 +50,16 @@ from app.kb.rag import (
     hits_to_citations,
     run_rag_retrieve,
 )
-from app.kb.retriever import RESULT_FIELDS, clear_index_cache, get_chunk, get_index, retrieve
+from app.kb.retriever import (
+    RESULT_FIELDS,
+    clear_index_cache,
+    get_cache_counters,
+    get_chunk,
+    get_index,
+    reset_cache_counters,
+    retrieve,
+    retrieve_stat_fields,
+)
 
 __all__ = [
     "ASK_MODE_LLM",
@@ -70,14 +82,17 @@ __all__ = [
     "dedupe_key",
     "embed_query",
     "embed_texts",
+    "get_cache_counters",
     "get_chunk",
     "get_index",
+    "reset_cache_counters",
     "hits_to_citations",
     "html_to_markdown",
     "is_bad_content",
     "load_index",
     "load_jsonl",
     "retrieve",
+    "retrieve_stat_fields",
     "run_rag_retrieve",
     "save_index",
     "sha256_8",

@@ -25,6 +25,7 @@
   TOOL_TIMEOUT        —— 单工具执行超时（线程池 future）
   TOOL_INDEX_NOT_READY—— 本地索引未建
   TOOL_EXEC_FAILED    —— 其它执行异常（兜底）
+  TOOL_NEEDS_APPROVAL —— 高风险工具需 human-in-the-loop（Day17）
 
 ==========================================================================
 和 mode=rag 的关系
@@ -56,11 +57,24 @@ TOOL_TIMEOUT = "TOOL_TIMEOUT"
 TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
 TOOL_EXEC_FAILED = "TOOL_EXEC_FAILED"
 TOOL_INDEX_NOT_READY = "TOOL_INDEX_NOT_READY"
+TOOL_NEEDS_APPROVAL = "TOOL_NEEDS_APPROVAL"
 
 DEFAULT_TOOL_TIMEOUT_SECONDS = 10.0
 MAX_TOP_K = 20
 MAX_QUERY_LEN = 500
 MAX_CHUNK_ID_LEN = 200
+
+# Day17：高风险工具（当前未注册到 _HANDLERS；预留给 DB/Text-to-SQL/Shell）
+# 调用时一律返回 TOOL_NEEDS_APPROVAL，除非显式 approved=True（人工确认后）。
+# 约定：未来接 SQL 时可先只返回 SQL 文本、不执行；执行必须 HITL。
+HIGH_RISK_TOOLS = frozenset(
+    {
+        "db_query",
+        "execute_sql",
+        "text_to_sql_execute",
+        "shell_exec",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # OpenAI / DeepSeek function-calling schema
@@ -73,7 +87,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": TOOL_KB_SEARCH,
             "description": (
-                "在本地稳定性知识库中检索与问题最相关的 TopK 片段。"
+                "在本地稳定性知识库中混合检索（向量+关键词）最相关的 TopK 片段。"
                 "返回 chunk_id / score / title / url / text_snippet。"
                 "排障类问题应优先调用本工具，再按需 kb_get_chunk 取全文。"
             ),
@@ -259,14 +273,30 @@ def execute_tool(
     *,
     index_dir: Path | str | None = None,
     timeout_seconds: float | None = None,
+    approved: bool = False,
 ) -> dict[str, Any]:
-    """工具统一入口：解析参数 → 校验名 → 限时执行。
+    """工具统一入口：高风险审批 → 白名单 → 参数校验 → 限时执行。
 
     超时用 ThreadPoolExecutor + future.result(timeout=...)：
       单工具卡住时返回 TOOL_TIMEOUT，不拖垮整单 Agent。
     永不向调用方抛异常（最后一道 except → TOOL_EXEC_FAILED）。
+
+    approved=True：仅用于未来 HITL 确认后重放高风险工具；默认 False。
     """
     tool_name = (name or "").strip()
+
+    # Day17：高风险工具必须人工确认（优先于 NOT_FOUND，便于模型/前端识别）
+    if tool_name in HIGH_RISK_TOOLS and not approved:
+        return _error(
+            TOOL_NEEDS_APPROVAL,
+            (
+                f"high-risk tool '{tool_name}' requires human-in-the-loop approval; "
+                "do not execute. For SQL: return the statement for review only."
+            ),
+            tool=tool_name,
+            requires_human=True,
+        )
+
     if tool_name not in _HANDLERS:
         return _error(TOOL_NOT_FOUND, f"unknown tool: {tool_name or '(empty)'}", tool=tool_name)
 

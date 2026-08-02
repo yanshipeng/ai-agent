@@ -43,6 +43,7 @@ logger = get_logger(__name__)
 # ---------- 调用默认值（与环境变量默认对齐；timeout 实际读 Settings） ----------
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
+# 默认输出上限；实际请求优先用 Settings.llm_max_tokens（Day18 max_output_tokens）
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_STREAM = False
@@ -432,7 +433,7 @@ class LLMClient:
         kwargs: dict[str, Any] = {
             "model": DEFAULT_MODEL,
             "messages": messages,
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "max_tokens": int(self._settings.llm_max_tokens or DEFAULT_MAX_TOKENS),
             "stream": DEFAULT_STREAM,
             "extra_body": dict(DEFAULT_EXTRA_BODY),
         }
