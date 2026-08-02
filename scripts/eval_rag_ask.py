@@ -14,7 +14,7 @@
 
   python scripts/eval_rag_ask.py \\
     --base-url http://127.0.0.1:8000 \\
-    --samples ./eval_rag_samples.jsonl \\
+    --samples ./eval/eval_rag_samples.jsonl \\
     --seed 42 \\
     --code-mode either
 
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_SAMPLES = ROOT / "eval_rag_samples.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_rag_samples.jsonl"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT = 90.0
@@ -457,7 +457,7 @@ def main() -> int:
     stamp = utc_stamp()
     results_path = out_dir / f"rag_eval_results_{stamp}.jsonl"
     report_path = out_dir / f"rag_eval_report_{stamp}.json"
-    latest = ROOT / "rag_eval_report.json"
+    latest = ROOT / "reports" / "rag_eval_report.json"
 
     with results_path.open("w", encoding="utf-8") as fp:
         for row in results:

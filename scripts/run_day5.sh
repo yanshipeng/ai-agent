@@ -89,7 +89,7 @@ fi
 echo "======== Day 5.3: regression runner ========"
 EVAL_CMD=(
   python scripts/run_eval.py
-  --samples ./eval_samples.jsonl
+  --samples ./eval/eval_samples.jsonl
   --base-url "$BASE_URL"
   --results "$RESULTS_PATH"
   --report "$REPORT_PATH"
@@ -100,11 +100,11 @@ fi
 "${EVAL_CMD[@]}"
 
 # 同步一份固定文件名，便于「当前最新报告」查看
-cp "$REPORT_PATH" ./eval_run_report.json
-cp "$RESULTS_PATH" ./eval_results.jsonl
+cp "$REPORT_PATH" ./reports/eval_run_report.json
+cp "$RESULTS_PATH" ./reports/eval_results.jsonl
 
 echo "======== Day 5 done ========"
 echo "report (timestamped): $REPORT_PATH"
-echo "report (latest)     : ./eval_run_report.json"
-echo "results             : ./eval_results.jsonl"
+echo "report (latest)     : ./reports/eval_run_report.json"
+echo "results             : ./reports/eval_results.jsonl"
 echo "server log          : $SERVER_LOG"

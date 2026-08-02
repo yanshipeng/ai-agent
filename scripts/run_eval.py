@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Day 5.3 回归跑批：逐条调用 HTTP /ask，输出明细与汇总报告。
 
-输入：eval_samples.jsonl（字段 id / query / tag）
+输入：eval/eval_samples.jsonl（字段 id / query / tag）
 输出：
-  - eval_results.jsonl（每条一行明细）
-  - eval_run_report.json（汇总：total、ok_rate、p95_latency、top_errors、各 tag 失败数）
+  - reports/eval_results.jsonl（每条一行明细）
+  - reports/eval_run_report.json（汇总：total、ok_rate、p95_latency、top_errors、各 tag 失败数）
 
 要求：20 条能跑完不中断；即使单条失败也继续。
 """
@@ -179,10 +179,10 @@ def run_eval(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Regression runner against HTTP /ask")
-    parser.add_argument("--samples", default="./eval_samples.jsonl")
+    parser.add_argument("--samples", default="./eval/eval_samples.jsonl")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--results", default="./eval_results.jsonl")
-    parser.add_argument("--report", default="./eval_run_report.json")
+    parser.add_argument("--results", default="./reports/eval_results.jsonl")
+    parser.add_argument("--report", default="./reports/eval_run_report.json")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()

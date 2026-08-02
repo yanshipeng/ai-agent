@@ -15,7 +15,7 @@ from scripts.run_rag_eval import (
 
 
 def test_eval_samples_rag_distribution():
-    samples = load_samples(Path("eval_samples_rag.jsonl"))
+    samples = load_samples(Path("eval/eval_samples_rag.jsonl"))
     counts = validate_sample_distribution(samples)
     assert counts["normal"] >= 30
     assert counts["insufficient"] >= 10

@@ -34,7 +34,7 @@ if str(ROOT) not in sys.path:
 
 from app.kb.retriever import clear_index_cache, retrieve  # noqa: E402
 
-DEFAULT_SAMPLES = ROOT / "eval_samples_rag.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_samples_rag.jsonl"
 DEFAULT_INDEX = ROOT / "data" / "stability_kb" / "index"
 DEFAULT_OUT = ROOT / "reports" / "day16_spotcheck.json"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
@@ -353,7 +353,7 @@ def main() -> int:
     print(
         "\n下一步：打开 JSON/MD，填写每条 top3_more_relevant + reason；"
         "若用了 --via-ask，再跑：\n"
-        "  python scripts/stats_requests.py --path ./requests.jsonl --mode rag"
+        "  python scripts/stats_requests.py --path ./data/runtime/requests.jsonl --mode rag"
     )
     return 0
 

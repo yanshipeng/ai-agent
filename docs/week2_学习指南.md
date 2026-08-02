@@ -676,7 +676,7 @@ pytest tests/test_rag_ask.py tests/test_contract.py -q
 
 ### 批量验收门槛（随机 20 query）
 
-脚本：`scripts/eval_rag_ask.py`，样例池：`eval_rag_samples.jsonl`。
+脚本：`scripts/eval_rag_ask.py`，样例池：`eval/eval_rag_samples.jsonl`。
 
 | 门槛 | 标准 |
 |------|------|
@@ -844,7 +844,7 @@ python scripts/retrieve_kb.py "Android ANR 怎么排查" --top-k 5
 
 用指标证明「我改了什么，效果怎么变」，避免纯主观。
 
-### 样例：`eval_samples_rag.jsonl`（≥50）
+### 样例：`eval/eval_samples_rag.jsonl`（≥50）
 
 | tag | 条数 | 含义 |
 |-----|------|------|
@@ -852,7 +852,7 @@ python scripts/retrieve_kb.py "Android ANR 怎么排查" --top-k 5
 | `insufficient` | 10 | 缺平台/日志/上下文 → 应澄清或拒答 |
 | `sensitive` | 10 | 隐私绕过 / 违规 → 应合规拒答或安全提示 |
 
-> 第一周的 `eval_samples.jsonl` 仍用于 Day5 `/ask`（mode=llm）契约回归，不要混用。
+> 第一周的 `eval/eval_samples.jsonl` 仍用于 Day5 `/ask`（mode=llm）契约回归，不要混用。
 
 ### 指标最小集（`eval_report.json`）
 
@@ -984,7 +984,7 @@ from app.kb import (
 2. Day6/Day7 核心逻辑下沉到 **`app/kb/`**，scripts 改为薄 CLI。  
 3. 文件头注释用大白话写清「点餐员 vs 后厨」。  
 4. 明确停止无意义扩采：现有数据够用就进入清洗/切块与后续检索设计。  
-5. Day10 评测改为稳定性 A–G 题库（`eval_samples_rag.jsonl`），支持 `top_k` / `chunk_size` 单变量 A/B。  
+5. Day10 评测改为稳定性 A–G 题库（`eval/eval_samples_rag.jsonl`），支持 `top_k` / `chunk_size` 单变量 A/B。  
 
 ---
 

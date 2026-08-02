@@ -14,13 +14,13 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
-requests.jsonl
-traces.jsonl
-eval_results.jsonl
-eval_report.json
-rag_eval_report.json
-agent_eval_report.json
-reports/
+.DS_Store
+*.log
+
+# 运行时指标 / 本地产物（勿污染仓库根目录）
+data/runtime/*
+!data/runtime/.gitkeep
+data/feedback/
 data/stability_kb/raw/
 data/stability_kb/articles.jsonl
 data/stability_kb/discovered_seeds.jsonl
@@ -31,6 +31,17 @@ data/stability_kb/chunks.jsonl
 data/stability_kb/chunks_report.json
 data/stability_kb/index/
 data/stability_kb/versions/
-data/feedback/
-.DS_Store
-*.log
+
+# 评测报告与明细（输入样例在 eval/，产物在 reports/）
+reports/*
+!reports/.gitkeep
+
+# 历史遗留：若仍落在仓库根目录则忽略
+/requests.jsonl
+/traces.jsonl
+/eval_results.jsonl
+/eval_report.json
+/eval_run_report.json
+/rag_eval_report.json
+/agent_eval_report.json
+/eval_ab_compare.json

@@ -14,7 +14,7 @@ from scripts.run_agent_eval import (
 
 
 def test_agent_eval_samples_distribution():
-    samples = load_samples(Path("agent_eval_samples.jsonl"))
+    samples = load_samples(Path("eval/agent_eval_samples.jsonl"))
     counts = validate_sample_distribution(samples)
     assert len(samples) >= 30
     assert counts["tool"] >= 20

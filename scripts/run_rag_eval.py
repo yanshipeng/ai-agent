@@ -56,7 +56,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_SAMPLES = ROOT / "eval_samples_rag.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_samples_rag.jsonl"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TOP_K = 5
 DEFAULT_TIMEOUT = 90.0
@@ -567,7 +567,7 @@ def main() -> int:
         cmp_report = compare_reports(ra, rb)
         cmp_path = out_dir / f"eval_ab_compare_{utc_stamp()}.json"
         write_json(cmp_path, cmp_report)
-        write_json(ROOT / "eval_ab_compare.json", cmp_report)
+        write_json(ROOT / "reports" / "eval_ab_compare.json", cmp_report)
         print(json.dumps(cmp_report, ensure_ascii=False, indent=2))
         print(f"compare => {cmp_path}")
         return 0
@@ -630,11 +630,11 @@ def main() -> int:
         write_jsonl(out_dir / f"eval_results_B_topk{b_val}_{stamp}.jsonl", results_b)
         write_json(path_a, report_a)
         write_json(path_b, report_b)
-        write_json(ROOT / "eval_report.json", report_b)  # 最新默认指向 B
+        write_json(ROOT / "reports" / "eval_report.json", report_b)  # 最新默认指向 B
         cmp_report = compare_reports(report_a, report_b)
         cmp_path = out_dir / f"eval_ab_compare_topk_{stamp}.json"
         write_json(cmp_path, cmp_report)
-        write_json(ROOT / "eval_ab_compare.json", cmp_report)
+        write_json(ROOT / "reports" / "eval_ab_compare.json", cmp_report)
         print_report_summary(report_a)
         print_report_summary(report_b)
         print(json.dumps(cmp_report["deltas"], ensure_ascii=False, indent=2))
@@ -693,11 +693,11 @@ def main() -> int:
             else:
                 report_b, path_b = report, path
             print_report_summary(report)
-        write_json(ROOT / "eval_report.json", report_b)
+        write_json(ROOT / "reports" / "eval_report.json", report_b)
         cmp_report = compare_reports(report_a, report_b)
         cmp_path = out_dir / f"eval_ab_compare_chunk_{stamp}.json"
         write_json(cmp_path, cmp_report)
-        write_json(ROOT / "eval_ab_compare.json", cmp_report)
+        write_json(ROOT / "reports" / "eval_ab_compare.json", cmp_report)
         print(json.dumps(cmp_report["deltas"], ensure_ascii=False, indent=2))
         print(f"A => {path_a}\nB => {path_b}\ncompare => {cmp_path}")
         return 0
@@ -715,7 +715,7 @@ def main() -> int:
         limit=args.limit,
     )
     results_path = Path(args.results) if args.results else out_dir / f"eval_results_{stamp}.jsonl"
-    report_path = Path(args.report) if args.report else ROOT / "eval_report.json"
+    report_path = Path(args.report) if args.report else ROOT / "reports" / "eval_report.json"
     stamped_report = out_dir / f"eval_report_{stamp}.json"
     write_jsonl(results_path, results)
     write_json(report_path, report)

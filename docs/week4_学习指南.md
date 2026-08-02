@@ -19,7 +19,7 @@
 | `app/kb/bm25.py` | 简易 Okapi BM25 + min-max 归一化（Day16） |
 | `app/core/safety.py` | 安全规则 / 注入预检 / 引用门禁 / 泄密扫描（Day17） |
 | `app/services/token_budget.py` | 启发式 token 估算 + 超预算压缩（Day18） |
-| `eval_samples_injection.jsonl` | 注入样例 ≥10（Day17） |
+| `eval/eval_samples_injection.jsonl` | 注入样例 ≥10（Day17） |
 | `scripts/spotcheck_retrieve_day16.py` | 随机抽检 20 条 Top3 + 主观理由表 |
 | `scripts/run_injection_eval.py` | 注入评测（离线/在线）→ `reports/injection_eval_report.json` |
 | `tests/test_hybrid_retrieve.py` | Day16 混合检索 / 去重 |
@@ -121,7 +121,7 @@ python scripts/spotcheck_retrieve_day16.py
 
 # ② 经 /ask 写 jsonl（需服务已启动）
 python scripts/spotcheck_retrieve_day16.py --via-ask
-python scripts/stats_requests.py --path ./requests.jsonl --mode rag
+python scripts/stats_requests.py --path ./data/runtime/requests.jsonl --mode rag
 
 python scripts/run_rag_eval.py   # normal 类引用覆盖率不下降
 ```
@@ -140,7 +140,7 @@ python scripts/run_rag_eval.py   # normal 类引用覆盖率不下降
 
 ### 验收标准
 
-- `eval_samples_rag.jsonl` 中 **normal** 类：**引用覆盖率不下降**
+- `eval/eval_samples_rag.jsonl` 中 **normal** 类：**引用覆盖率不下降**
 - **随机抽检 20 条** Top3 主观更相关 → `reports/day16_spotcheck.md`
 - `requests.jsonl` 能看到 `retrieve_ms` 与 before→after 去重流
 
@@ -173,7 +173,7 @@ python scripts/run_rag_eval.py   # normal 类引用覆盖率不下降
 | `app/kb/rag.py` / `app/agent/runner.py` | 安全 prompt + 文档横幅 |
 | `app/agent/tools.py` | `HIGH_RISK_TOOLS` + `TOOL_NEEDS_APPROVAL` |
 | `app/api.py` | 预检拒答；返回前 `enforce_*` |
-| `eval_samples_injection.jsonl` | ≥10 条注入样例 |
+| `eval/eval_samples_injection.jsonl` | ≥10 条注入样例 |
 | `scripts/run_injection_eval.py` | 离线/在线评测 |
 | `tests/test_safety.py` / `test_injection_eval.py` | 单测 + 验收 |
 
@@ -208,7 +208,7 @@ python scripts/run_injection_eval.py --offline
 
 ### 读代码顺序（Day17）
 
-1. `app/core/safety.py` → 2. `app/api.py`（注入预检）→ 3. `eval_samples_injection.jsonl` → 4. `scripts/run_injection_eval.py` → 5. `tests/test_injection_eval.py`
+1. `app/core/safety.py` → 2. `app/api.py`（注入预检）→ 3. `eval/eval_samples_injection.jsonl` → 4. `scripts/run_injection_eval.py` → 5. `tests/test_injection_eval.py`
 
 ---
 
@@ -231,7 +231,7 @@ python scripts/run_injection_eval.py --offline
 | 环境变量 | 默认 | 含义 |
 |----------|------|------|
 | `AGENT_MAX_CONTEXT_TOKENS` | 6000 | Agent context 预算（启发式） |
-| `TRACES_JSONL_PATH` | `./traces.jsonl` | 逐步 trace 落盘 |
+| `TRACES_JSONL_PATH` | `./data/runtime/traces.jsonl` | 逐步 trace 落盘 |
 | `LLM_MAX_TOKENS` | 2048 | 输出侧 `max_output_tokens` |
 
 ### 怎么验收
@@ -272,7 +272,7 @@ python scripts/stats_requests.py --mode agent
 | `RAG_HYBRID_WEIGHT` | `0.6` | 混合检索向量占比 |
 | `RAG_MIN_SCORE` | `0.05` | 融合分阈值 |
 | `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Agent context token 预算 |
-| `TRACES_JSONL_PATH` | `./traces.jsonl` | Agent Trace 落盘路径 |
+| `TRACES_JSONL_PATH` | `./data/runtime/traces.jsonl` | Agent Trace 落盘路径 |
 
 其余见 [README §3](../README.md) / `.env.example`。
 
@@ -312,7 +312,7 @@ python scripts/stats_requests.py --mode agent
 | `budget_compressed` 很多 | history/tool 结果太长 | 调大 `AGENT_MAX_CONTEXT_TOKENS`，或缩短 session |
 | `trace_steps` 接近 `max_steps*几` | 模型多轮 tool_calls | 正常；看 `stop_reason` 是否收口 |
 | BM25 单文档分数被抹成 0 | 旧版 min-max 同分归零 | 已修：正分且全等时归一为 `1.0` |
-| 注入评测拒答率低 | 样例与预检正则不对齐 | 看 `eval_samples_injection.jsonl` 与 `INJECTION_PATTERNS` |
+| 注入评测拒答率低 | 样例与预检正则不对齐 | 看 `eval/eval_samples_injection.jsonl` 与 `INJECTION_PATTERNS` |
 
 ---
 

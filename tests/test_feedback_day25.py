@@ -82,7 +82,7 @@ def test_promote_and_regression_offline(tmp_path, monkeypatch) -> None:
     promo = promote_pending_to_eval(out_path=out, limit=10)
     assert promo["promoted"] == 3
 
-    v2 = Path("eval_samples_v2.jsonl")
+    v2 = Path("eval/eval_samples_v2.jsonl")
     merged = tmp_path / "merged.jsonl"
     n = merge_samples([v2, out], merged)
     assert n >= 80
@@ -101,7 +101,7 @@ def test_promote_and_regression_offline(tmp_path, monkeypatch) -> None:
 
 
 def test_feedback_seed_file_exists() -> None:
-    path = Path("eval_samples_feedback.jsonl")
+    path = Path("eval/eval_samples_feedback.jsonl")
     assert path.exists()
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(lines) >= 5

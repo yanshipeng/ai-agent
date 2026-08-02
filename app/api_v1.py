@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHUNKS = ROOT / "data" / "stability_kb" / "chunks.jsonl"
 DEFAULT_DOCS = ROOT / "data" / "stability_kb" / "docs.jsonl"
-DEFAULT_SAMPLES = ROOT / "eval_samples_v2.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_samples_v2.jsonl"
 
 EVAL_LIMIT_DEFAULT = 5
 EVAL_LIMIT_MAX = 80

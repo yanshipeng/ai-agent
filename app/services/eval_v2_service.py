@@ -13,7 +13,7 @@ from scripts.run_eval_v2 import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SAMPLES = ROOT / "eval_samples_v2.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_samples_v2.jsonl"
 
 AskCaller = Callable[[str, str], dict[str, Any]]
 

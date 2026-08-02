@@ -59,7 +59,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Agent tool_calls 冒烟（5 次 /ask?mode=agent）")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--log", default="/tmp/app.log", help="服务 tee 的日志文件")
-    parser.add_argument("--metrics", default="./requests.jsonl")
+    parser.add_argument("--metrics", default="./data/runtime/requests.jsonl")
     parser.add_argument("--min-tool-calls", type=int, default=3)
     args = parser.parse_args()
 

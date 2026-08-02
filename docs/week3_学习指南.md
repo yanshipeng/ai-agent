@@ -21,10 +21,10 @@
 | `app/agent/runner.py` | 状态机 Plan→Act→Observe→Final；`stop_reason` / 超步降级 / 超时兜底 |
 | `app/services/session_store.py` | 进程内 `session_id → messages`（TTL） |
 | `app/services/conversation.py` | 上下文：截断 → 滑窗 →（可选）摘要 |
-| `agent_eval_samples.jsonl` | Agent 评测样例 ≥30（默认 A=ANR：22 tool + 10 clarify） |
+| `eval/agent_eval_samples.jsonl` | Agent 评测样例 ≥30（默认 A=ANR：22 tool + 10 clarify） |
 | `scripts/smoke_agent_tools.py` | 5 次 agent 冒烟，验收真实 `tool_call_start` |
 | `scripts/smoke_session_memory.py` | 同 session 5 轮约束记忆 + 指标字段 |
-| `scripts/run_agent_eval.py` | 批量评测 → `agent_eval_report.json` |
+| `scripts/run_agent_eval.py` | 批量评测 → `reports/agent_eval_report.json` |
 | `tests/test_agent_tools.py` | 工具 / Runner / `/ask?mode=agent` |
 | `tests/test_session_conversation.py` | 滑窗 / 摘要 / 多轮带历史 |
 | `tests/test_run_agent_eval.py` | 评测报告指标形状（不打 LLM） |
@@ -69,7 +69,7 @@
 | 多轮 session | 同 `session_id` 带历史；滑窗 / 截断 / 可选摘要 |
 | 可观测 | 日志 `tool_call_*` / `agent_stop`；jsonl 含 agent + session 字段 |
 | 稳健性 | 工具失败不崩：`TOOL_*`；`stop_reason` 六选一 |
-| 评测 | `agent_eval_samples.jsonl` ≥30 → `agent_eval_report.json` |
+| 评测 | `eval/agent_eval_samples.jsonl` ≥30 → `reports/agent_eval_report.json` |
 
 一句话：
 
@@ -109,7 +109,7 @@ app/api.py                    ← mode=agent 入口 _ask_agent；session 注入
 app/kb/retriever.py           ← retrieve + get_chunk（被工具调用）
 
 scripts/smoke_agent_tools.py  ← 薄 CLI：5 次真实验收
-scripts/run_agent_eval.py     ← Agent 评测 → agent_eval_report.json
+scripts/run_agent_eval.py     ← Agent 评测 → reports/agent_eval_report.json
 tests/test_agent_tools.py     ← mock LLM，不打网
 tests/test_session_conversation.py  ← 多轮上下文单测
 tests/test_run_agent_eval.py  ← 评测报告逻辑单测
@@ -207,7 +207,7 @@ client.chat.completions.create(..., tools=..., tool_choice="auto")
 # 同 session 5 轮记忆 + 指标 + P95
 ./scripts/start_server.sh 2>&1 | tee /tmp/app.log
 python scripts/smoke_session_memory.py
-python scripts/stats_requests.py --path ./requests.jsonl --session-id <上一步打印的 session_id>
+python scripts/stats_requests.py --path ./data/runtime/requests.jsonl --session-id <上一步打印的 session_id>
 ```
 
 手动两轮：
@@ -396,7 +396,7 @@ python scripts/smoke_agent_tools.py --log /tmp/app.log
 
 ### Agent 批量评测（≥30，默认 A=ANR）
 
-样例：`agent_eval_samples.jsonl`（22 条 `tool` + 10 条 `clarify`）。
+样例：`eval/agent_eval_samples.jsonl`（22 条 `tool` + 10 条 `clarify`）。
 
 ```bash
 ./scripts/start_server.sh 2>&1 | tee /tmp/app.log
@@ -407,7 +407,7 @@ python scripts/run_agent_eval.py --limit 5 --skip-validate
 
 产出：
 
-- `agent_eval_report.json`：汇总指标
+- `reports/agent_eval_report.json`：汇总指标
 - `reports/agent_eval_details.jsonl`：每条样例明细
 
 | 指标 | 含义 |
@@ -469,7 +469,7 @@ pytest -q
 - [x] 工具失败可控：`TOOL_INVALID_ARGS` / `TOOL_TIMEOUT` 等  
 - [x] 多轮 `session_id`：滑窗 / 截断 / 摘要；`smoke_session_memory.py`  
 - [x] `requests.jsonl`：`session_id` / `history_messages` / `history_chars`  
-- [x] Agent 评测：`agent_eval_samples.jsonl` ≥30 + `run_agent_eval.py`  
+- [x] Agent 评测：`eval/agent_eval_samples.jsonl` ≥30 + `run_agent_eval.py`  
 - [x] 单测：`test_agent_tools` / `test_session_conversation` / `test_run_agent_eval`  
 
 ---

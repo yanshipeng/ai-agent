@@ -53,7 +53,7 @@
 
 | 路径 | 作用 |
 |------|------|
-| `eval_samples_v2.jsonl` | Day19 统一样例（80 条，含判定字段） |
+| `eval/eval_samples_v2.jsonl` | Day19 统一样例（80 条，含判定字段） |
 | `scripts/run_eval_v2.py` | 在线/离线评测 + 三项指标报告 |
 | `tests/test_eval_v2.py` | 样例分布 + 判定逻辑（不打 LLM） |
 | `reports/eval_v2_report.json` | 汇总报告（运行后生成） |
@@ -101,7 +101,7 @@ safety_pass_rate      : 0.xx (n/den)
 
 ### 读代码顺序（Day19）
 
-1. `eval_samples_v2.jsonl` → 2. `scripts/run_eval_v2.py`（`evaluate_*` / `build_report`）→ 3. `tests/test_eval_v2.py` → 4. 在线跑一枪看 `reports/eval_v2_report.json`
+1. `eval/eval_samples_v2.jsonl` → 2. `scripts/run_eval_v2.py`（`evaluate_*` / `build_report`）→ 3. `tests/test_eval_v2.py` → 4. 在线跑一枪看 `reports/eval_v2_report.json`
 
 ### 和旧评测的关系
 
@@ -395,7 +395,7 @@ python scripts/run_rate_limit_smoke.py --n 20
 
 ### 种子 badcase
 
-仓库已带 `eval_samples_feedback.jsonl`（5 条），可直接进回归。
+仓库已带 `eval/eval_samples_feedback.jsonl`（5 条），可直接进回归。
 
 ### 验收
 

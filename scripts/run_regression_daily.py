@@ -2,8 +2,8 @@
 """Day25：一键回归 + 趋势（至少可连续跑 3 次看曲线）。
 
 默认离线跑：
-  - eval_samples_v2.jsonl（基线）
-  - eval_samples_feedback.jsonl（反馈 badcase，若存在）
+  - eval/eval_samples_v2.jsonl（基线）
+  - eval/eval_samples_feedback.jsonl（反馈 badcase，若存在）
 
 结果追加到 reports/regression_trend.jsonl，并打印最近 N 次趋势。
 
@@ -30,8 +30,8 @@ from app.services.eval_v2_service import run_eval_batch  # noqa: E402
 from app.services.feedback_store import promote_pending_to_eval  # noqa: E402
 from scripts.run_eval_v2 import load_samples  # noqa: E402
 
-DEFAULT_V2 = ROOT / "eval_samples_v2.jsonl"
-DEFAULT_FB = ROOT / "eval_samples_feedback.jsonl"
+DEFAULT_V2 = ROOT / "eval" / "eval_samples_v2.jsonl"
+DEFAULT_FB = ROOT / "eval" / "eval_samples_feedback.jsonl"
 DEFAULT_TREND = ROOT / "reports" / "regression_trend.jsonl"
 DEFAULT_MERGED = ROOT / "reports" / "eval_regression_samples.jsonl"
 

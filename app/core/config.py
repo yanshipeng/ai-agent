@@ -43,7 +43,10 @@ class Settings(BaseSettings):
     llm_thinking: str = Field(default="disabled", alias="LLM_THINKING")
 
     # 可选
-    requests_jsonl_path: str = Field(default="./requests.jsonl", alias="REQUESTS_JSONL_PATH")
+    requests_jsonl_path: str = Field(
+        default="./data/runtime/requests.jsonl",
+        alias="REQUESTS_JSONL_PATH",
+    )
     app_version: str = Field(default="0.1.0ba", alias="APP_VERSION")
 
     # RAG / 知识库
@@ -83,7 +86,7 @@ class Settings(BaseSettings):
         alias="AGENT_MAX_CONTEXT_TOKENS",
     )
     traces_jsonl_path: str = Field(
-        default="./traces.jsonl",
+        default="./data/runtime/traces.jsonl",
         alias="TRACES_JSONL_PATH",
     )
 

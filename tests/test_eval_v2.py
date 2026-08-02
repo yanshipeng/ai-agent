@@ -20,7 +20,7 @@ from scripts.run_eval_v2 import (
 
 
 def test_eval_v2_samples_distribution() -> None:
-    samples = load_samples(Path("eval_samples_v2.jsonl"))
+    samples = load_samples(Path("eval/eval_samples_v2.jsonl"))
     counts = validate_sample_distribution(samples)
     assert len(samples) >= 80
     assert counts[SUITE_FACT] >= 30

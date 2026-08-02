@@ -97,8 +97,8 @@ tests/
 ├── test_metrics_store.py
 └── test_stats_requests.py
 
-eval_samples.jsonl            # ≥20：10 normal / 5 clarify / 5 refuse
-eval_run_report.json          # 最近一次回归汇总
+eval/eval_samples.jsonl       # ≥20：10 normal / 5 clarify / 5 refuse
+reports/eval_run_report.json  # 最近一次回归汇总（本地生成）
 ```
 
 ---
@@ -114,7 +114,7 @@ eval_run_report.json          # 最近一次回归汇总
 | `LLM_MAX_TOKENS` | 否 | `512` | 最大生成 token |
 | `LLM_TEMPERATURE` | 否 | `0.2` | 温度 |
 | `LLM_THINKING` | 否 | `disabled` | `disabled` / `enabled` |
-| `REQUESTS_JSONL_PATH` | 否 | `./requests.jsonl` | 请求指标路径 |
+| `REQUESTS_JSONL_PATH` | 否 | `./data/runtime/requests.jsonl` | 请求指标路径 |
 | `APP_VERSION` | 否 | `0.1.0ba` | `/health` 版本 |
 
 （第二周才用的 `KB_INDEX_DIR` / `RAG_TOP_K` 见 week2 指南。）
@@ -235,12 +235,12 @@ python scripts/trace_request.py <request_id> --log /tmp/app.log
 
 ### requests.jsonl（每请求 1 行）
 
-路径：`REQUESTS_JSONL_PATH`（默认 `./requests.jsonl`）。
+路径：`REQUESTS_JSONL_PATH`（默认 `./data/runtime/requests.jsonl`）。
 
 字段：`ts, request_id, path, ok, status_code, latency_ms_total, latency_ms_llm, llm_model, retry_count, finish_reason, error_code, query_len, query_sha256_8`，以及能取到时的 `prompt_tokens / completion_tokens / total_tokens`。不写 query/answer 原文。
 
 ```bash
-python scripts/stats_requests.py --path ./requests.jsonl
+python scripts/stats_requests.py --path ./data/runtime/requests.jsonl
 # 输出：total/ok/fail/ok_rate、p50/p95/max latency、retry_rate、top_error_codes、token 分位等
 ```
 
@@ -301,22 +301,22 @@ pytest -q
 
 ### Day 5.3 回归样例 + 批量报告
 
-样例：`eval_samples.jsonl`（20 条：10 `normal` / 5 `clarify` / 5 `refuse`）。
+样例：`eval/eval_samples.jsonl`（20 条：10 `normal` / 5 `clarify` / 5 `refuse`）。
 
 服务已启动时单独跑批：
 
 ```bash
 python scripts/run_eval.py \
-  --samples ./eval_samples.jsonl \
+  --samples ./eval/eval_samples.jsonl \
   --base-url http://127.0.0.1:8000 \
-  --results ./eval_results.jsonl \
-  --report ./eval_run_report.json
+  --results ./reports/eval_results.jsonl \
+  --report ./reports/eval_run_report.json
 ```
 
 报告字段：`total`、`ok_rate`、`p95_latency`、`top_errors`、各 tag 失败数。  
-带时间戳副本在 `reports/eval_run_report_*.json`（`run_day5.sh` 生成），根目录 `eval_run_report.json` 为最新一份，便于每周对比。
+带时间戳副本在 `reports/eval_run_report_*.json`（`run_day5.sh` 生成），`reports/eval_run_report.json` 为最新一份，便于每周对比。
 
-> 注意：第二周的 `eval_samples_rag.jsonl` / `run_rag_eval.py` 是另一套评测，不要和本周 `eval_samples.jsonl` 混用。
+> 注意：第二周的 `eval/eval_samples_rag.jsonl` / `run_rag_eval.py` 是另一套评测，不要和本周 `eval/eval_samples.jsonl` 混用。
 
 ---
 
@@ -326,9 +326,9 @@ python scripts/run_eval.py \
 ./scripts/start_server.sh
 ./scripts/run_day5.sh
 python scripts/smoke_llm_client.py
-python scripts/stats_requests.py --path ./requests.jsonl
+python scripts/stats_requests.py --path ./data/runtime/requests.jsonl
 python scripts/trace_request.py <request_id> --log /tmp/app.log
-python scripts/run_eval.py --samples ./eval_samples.jsonl
+python scripts/run_eval.py --samples ./eval/eval_samples.jsonl
 pytest -q
 ```
 

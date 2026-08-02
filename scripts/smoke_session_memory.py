@@ -9,7 +9,7 @@
 常用：
   ./scripts/start_server.sh 2>&1 | tee /tmp/app.log
   python scripts/smoke_session_memory.py
-  python scripts/stats_requests.py --path ./requests.jsonl --session-id smoke-session-push
+  python scripts/stats_requests.py --path ./data/runtime/requests.jsonl --session-id smoke-session-push
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def load_metric_rows(path: Path, request_ids: list[str]) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="同 session 5 轮记忆 + 指标验收")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--metrics", default="./requests.jsonl")
+    parser.add_argument("--metrics", default="./data/runtime/requests.jsonl")
     parser.add_argument("--mode", default="llm", choices=["llm", "rag", "agent"])
     parser.add_argument(
         "--session-id",

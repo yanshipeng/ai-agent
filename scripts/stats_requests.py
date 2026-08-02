@@ -441,8 +441,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize requests.jsonl metrics")
     parser.add_argument(
         "--path",
-        default="./requests.jsonl",
-        help="Path to requests.jsonl (default: ./requests.jsonl)",
+        default="./data/runtime/requests.jsonl",
+        help="Path to requests.jsonl (default: ./data/runtime/requests.jsonl)",
     )
     parser.add_argument("--json", action="store_true", help="Print raw JSON summary")
     parser.add_argument(

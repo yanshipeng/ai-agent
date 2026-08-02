@@ -46,7 +46,7 @@ from app.core.safety import (  # noqa: E402
     looks_like_clarify,
 )
 
-DEFAULT_SAMPLES = ROOT / "eval_samples_v2.jsonl"
+DEFAULT_SAMPLES = ROOT / "eval" / "eval_samples_v2.jsonl"
 DEFAULT_REPORT = ROOT / "reports" / "eval_v2_report.json"
 DEFAULT_DETAILS = ROOT / "reports" / "eval_v2_details.jsonl"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"

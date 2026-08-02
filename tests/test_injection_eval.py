@@ -19,7 +19,7 @@ from app.core.safety import (
 from app.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLES = ROOT / "eval_samples_injection.jsonl"
+SAMPLES = ROOT / "eval" / "eval_samples_injection.jsonl"
 PASS_REFUSAL_RATE = 0.90
 
 

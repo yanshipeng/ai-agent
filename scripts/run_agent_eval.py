@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Week3 Agent 评测：mode=agent 打样例，输出 agent_eval_report.json。
+"""Week3 Agent 评测：mode=agent 打样例，输出 reports/agent_eval_report.json。
 
-样例：agent_eval_samples.jsonl（≥30，默认围绕稳定性知识库 A=ANR）
+样例：eval/agent_eval_samples.jsonl（≥30，默认围绕稳定性知识库 A=ANR）
   - tag=tool：应触发 tool_calls（可检索问题）
   - tag=clarify：信息不足，应澄清
 
@@ -37,8 +37,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_SAMPLES = ROOT / "agent_eval_samples.jsonl"
-DEFAULT_REPORT = ROOT / "agent_eval_report.json"
+DEFAULT_SAMPLES = ROOT / "eval" / "agent_eval_samples.jsonl"
+DEFAULT_REPORT = ROOT / "reports" / "agent_eval_report.json"
 DEFAULT_DETAILS = ROOT / "reports" / "agent_eval_details.jsonl"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT = 120.0

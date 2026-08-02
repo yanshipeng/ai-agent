@@ -41,7 +41,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 DEFAULT_INDEX_DIR = ROOT / "data" / "stability_kb" / "index"
-DEFAULT_METRICS = ROOT / "requests.jsonl"
+DEFAULT_METRICS = ROOT / "data" / "runtime" / "requests.jsonl"
 CITATION_KEYS = ("ref_id", "chunk_id", "url", "title", "section_path", "is_code")
 REF_IN_ANSWER_RE = re.compile(r"\[(\d+)\]")
 
